@@ -8,6 +8,7 @@ import re
 import shutil
 import subprocess
 import sys
+import tempfile
 import time
 from datetime import datetime
 from pathlib import Path
@@ -22,7 +23,17 @@ def executable():
     override = os.environ.get('QUOTADOCK_CODEX')
     if override:
         path = Path(override).expanduser()
+        if sys.platform == 'win32' and path.suffix.casefold() != '.exe':
+            return None
         return str(path) if path.is_file() and os.access(path, os.X_OK) else None
+    if sys.platform == 'win32':
+        local = os.environ.get('LOCALAPPDATA')
+        if local:
+            for relative in ('Programs/ChatGPT/resources/codex.exe', 'Programs/Codex/resources/codex.exe'):
+                path = Path(local) / relative
+                if path.is_file():
+                    return str(path)
+        return shutil.which('codex.exe')
     for location in ('/usr/lib/chatgpt/resources/codex', '/usr/lib/codex/resources/codex',
                      '/opt/ChatGPT/resources/codex', '/opt/Codex/resources/codex'):
         path = Path(location)
@@ -167,7 +178,7 @@ class QuotaClient(QObject):
                 self.process.waitForFinished(500)
 
 
-class AppWindowWatcher(QObject):
+class X11AppWindowWatcher(QObject):
     """Follow the active ChatGPT/Codex window through the X11 bridge on KDE."""
     changed = pyqtSignal(bool, QRect)
 
@@ -270,6 +281,12 @@ class AppWindowWatcher(QObject):
     def read_geometry(self, window_id):
         self.stage = 'geometry'
         self.process.start(self.xwininfo, ['-id', window_id])
+
+
+if sys.platform == 'win32':
+    from windows_watcher import AppWindowWatcher
+else:
+    AppWindowWatcher = X11AppWindowWatcher
 
 
 class Handle(QLabel):
@@ -561,7 +578,7 @@ class Bar(QWidget):
 
     def hide_from_taskbar(self):
         """Keep the floating monitor in the tray without a task-manager button."""
-        if not os.environ.get('DISPLAY'):
+        if sys.platform != 'linux' or not os.environ.get('DISPLAY'):
             return
         window_id = f'0x{int(self.winId()):x}'
         wmctrl = shutil.which('wmctrl')
@@ -859,8 +876,11 @@ def main():
     app.setApplicationName('QuotaDock')
     app.setWindowIcon(QIcon(str(Path(__file__).resolve().with_name('quotadock.svg'))))
     app.setQuitOnLastWindowClosed(False)
-    runtime = QStandardPaths.writableLocation(QStandardPaths.StandardLocation.RuntimeLocation)
-    lock = QLockFile(str(Path(runtime) / 'quotadock.lock'))
+    runtime_location = (QStandardPaths.StandardLocation.AppLocalDataLocation if sys.platform == 'win32'
+                        else QStandardPaths.StandardLocation.RuntimeLocation)
+    runtime = Path(QStandardPaths.writableLocation(runtime_location) or tempfile.gettempdir())
+    runtime.mkdir(parents=True, exist_ok=True)
+    lock = QLockFile(str(runtime / 'quotadock.lock'))
     if not lock.tryLock(100):
         return 0
     bar = Bar()
@@ -875,7 +895,7 @@ def main():
         bar.error('Offline test')
         assert bar.is_failed
         app.processEvents()
-        bar.grab().save('/tmp/quotadock-preview.png')
+        bar.grab().save(str(Path(tempfile.gettempdir()) / 'quotadock-preview.png'))
         QTimer.singleShot(100, app.quit)
     else:
         QTimer.singleShot(0, bar.client.start)

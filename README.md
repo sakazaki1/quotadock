@@ -2,7 +2,7 @@
 
 **Your remaining Codex quota, always within reach.**
 
-QuotaDock is a lightweight Linux desktop companion that shows your real remaining Codex quota in a compact overlay anchored to the active ChatGPT/Codex window, with a live system-tray icon. Built for Kubuntu and KDE Plasma, it keeps usage visible without opening the usage settings after every action.
+QuotaDock is a lightweight desktop companion for Linux and Windows that shows your real remaining Codex quota in a compact overlay anchored to the active ChatGPT/Codex window, with a live system-tray icon. It keeps usage visible without opening the usage settings after every action.
 
 It reads server-reported percentages from the local Codex app server. It does not count messages or estimate token consumption.
 
@@ -24,9 +24,9 @@ It reads server-reported percentages from the local Codex app server. It does no
 
 ## Compatibility
 
-Tested on **Kubuntu 26.04, KDE Plasma, Wayland with XWayland**, Python 3 and PyQt6. Other Linux desktops may work but have not been verified. Windows and macOS are not currently supported.
+The Linux version has been tested on **Kubuntu 26.04, KDE Plasma, Wayland with XWayland**. A Windows port is available for **Windows 10/11**, Python 3 and PyQt6; it uses the native Win32 foreground-window APIs and needs validation on a Windows computer. macOS is not supported.
 
-QuotaDock is a standalone companion, **not a plugin injected into ChatGPT**. By default it anchors its pop-up to the active ChatGPT/Codex window and hides when that window loses focus. This uses the X11/XWayland window information tools (`xprop` and `xwininfo`); if those tools or a detectable XWayland window are unavailable, the app-only overlay stays hidden. Turn off **Show only over ChatGPT/Codex** in the tray menu to use it as a regular floating window. It does not modify the official application.
+QuotaDock is a standalone companion, **not a plugin injected into ChatGPT**. By default it anchors its pop-up to the active ChatGPT/Codex window and hides when that window loses focus. On Linux this uses `xprop` and `xwininfo`; on Windows it recognizes foreground windows owned by `ChatGPT.exe` or `Codex.exe`. If no matching window is detectable, the overlay stays hidden. Turn off **Show only over ChatGPT/Codex** in the tray menu to use it as a regular floating window. It does not modify the official application.
 
 The displayed quota belongs to the account authenticated in the **local Codex runtime**. It is not a universal meter for every model or feature in regular ChatGPT chats. Some plans may omit one of the quota windows.
 
@@ -67,6 +67,17 @@ To try QuotaDock without installing:
 sh launch.sh
 ```
 
+## Quick start — Windows 10/11
+
+1. Install Python 3 from [python.org](https://www.python.org/downloads/windows/) with the Python launcher (`py`). Install and sign in to the ChatGPT/Codex desktop app or Codex CLI so `codex.exe` is available.
+2. Download this repository using **Code → Download ZIP** and extract it.
+3. Double-click `install-windows.cmd`. It creates a per-user Python environment, installs PyQt6, and adds **QuotaDock** to the Start menu and Startup folder. No administrator rights are needed. Internet access is needed once for PyQt6.
+4. Launch **QuotaDock** from the Start menu. The usage indicator appears in the Windows notification area; Windows may initially place it behind the hidden-icons arrow.
+
+To disable startup at login, run `install-windows.cmd --no-autostart` from Command Prompt. Quit QuotaDock before updating, then run the installer from a newly downloaded copy. The installed files live in `%LOCALAPPDATA%\QuotaDock` and the shortcuts in your user Start menu. To remove it, quit the app, delete that folder and the two `QuotaDock.lnk` shortcuts from your Start menu and Startup folder.
+
+The Windows overlay currently recognizes desktop processes named `ChatGPT.exe` and `Codex.exe`. If your app uses another executable name, turn off **Show only over ChatGPT/Codex** in the tray menu. Window anchoring, DPI scaling and multi-monitor behavior still need validation on Windows hardware.
+
 ### Codex executable discovery
 
 QuotaDock looks for Codex bundled with common Linux ChatGPT/Codex installations, then checks `codex` on your `PATH`. If it cannot find your executable, launch it with an explicit path:
@@ -74,6 +85,8 @@ QuotaDock looks for Codex bundled with common Linux ChatGPT/Codex installations,
 ```sh
 QUOTADOCK_CODEX=/path/to/codex sh launch.sh
 ```
+
+On Windows it checks common per-user desktop locations and `codex.exe` on `PATH`. You can set `QUOTADOCK_CODEX` to the full path of a trusted `codex.exe` in your user environment and relaunch QuotaDock. A Windows desktop installation may not bundle an executable at the locations QuotaDock checks; the Codex CLI is another option.
 
 To use this override from the application menu as well, configure the environment variable in your desktop session. Sign in using your Codex installation's normal sign-in flow. QuotaDock never asks you to paste credentials or API keys.
 
