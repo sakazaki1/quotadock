@@ -10,7 +10,7 @@ It reads server-reported percentages from the local Codex app server. It does no
 
 - **Real remaining quota:** percentages from 100% down to 0% for your short-term and weekly windows.
 - **Live tray icon:** remaining percentage and proportional quota bars, with full values available on hover.
-- **Automatic refresh:** polls every 30 seconds and accepts quota notifications received on its connection.
+- **Automatic refresh:** requests an update about every 30 seconds while connected and accepts quota notifications received on its connection.
 - **Next reset time:** visible below the hours panel, in your computer's local time zone.
 - **Compact bar theme:** shows only the remaining percentage and its progress bar, with no app name or labels.
 - **ChatGPT/Codex-only overlay:** by default the small pop-up stays inside the active ChatGPT/Codex window and hides when you switch to another app.
@@ -90,6 +90,8 @@ On Windows it checks common per-user desktop locations and `codex.exe` on `PATH`
 
 To use this override from the application menu as well, configure the environment variable in your desktop session. Sign in using your Codex installation's normal sign-in flow. QuotaDock never asks you to paste credentials or API keys.
 
+`QUOTADOCK_CODEX` and your `PATH` must point to a Codex executable you trust. QuotaDock runs that executable with your user permissions and environment. It never prints its environment, protocol responses or authentication data to a log.
+
 ## Everyday controls
 
 | Control | Action |
@@ -104,6 +106,7 @@ To use this override from the application menu as well, configure the environmen
 | **Display style → Bar and percentage only** | Hide the title and labels and show a small usage bar with its remaining percentage; drag the bar to move it and right-click for options |
 | **Display style → Full window** | Leave minimal mode and restore the full quota panel |
 | **Show only over ChatGPT/Codex** | Keep the pop-up inside the active ChatGPT/Codex window and hide it elsewhere |
+| **Copy Codex executable path** | Copy the resolved local Codex path for troubleshooting |
 | **Visible panels** | Select hours, weekly, or both |
 | **Theme** | Choose solid or translucent; adjust background opacity |
 | **Refresh now** | Request an immediate reading |
@@ -115,7 +118,7 @@ With both panels selected, the tray number represents the hours window; the top 
 
 QuotaDock starts `codex app-server --stdio`, completes initialization, and calls the documented `account/rateLimits/read` method. Remaining quota is calculated as `100 - usedPercent`. It also accepts `account/rateLimits/updated` notifications on that connection.
 
-Updates are periodic, not guaranteed after every individual action. The service itself can delay reporting. QuotaDock does not predict resets or synthesize new percentages when the local clock reaches a reset time. When offline, the window retains the last reading in gray with a warning; the tray switches to `?`. Readings older than 75 seconds are marked stale.
+Updates are periodic, not guaranteed after every individual action. A request may wait up to 20 seconds before timing out; reconnection normally starts 30 seconds later, so an outage can leave more than 50 seconds between samples. The service itself can delay reporting. QuotaDock does not predict resets or synthesize new percentages when the local clock reaches a reset time. When offline, the window retains the last reading in gray with a warning; the tray switches to `?`. Readings older than 75 seconds are marked stale.
 
 - No analytics, ad services or QuotaDock backend.
 - No direct reading, copying or transmission of authentication files by QuotaDock.

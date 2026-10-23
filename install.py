@@ -5,10 +5,25 @@ import importlib.util
 import os
 from pathlib import Path
 import shutil
+import tempfile
 
 
 def desktop_quote(value):
     return '"' + str(value).replace('\\', '\\\\').replace('"', '\\"').replace('`', '\\`').replace('$', '\\$').replace('%', '%%') + '"'
+
+
+def atomic_write(path, content):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = None
+    try:
+        with tempfile.NamedTemporaryFile(mode='w', encoding='utf-8', dir=path.parent,
+                                         prefix='.quotadock-', delete=False) as output:
+            temporary = Path(output.name)
+            output.write(content)
+        os.replace(temporary, path)
+    finally:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)
 
 
 def main():
@@ -20,6 +35,8 @@ def main():
     source = Path(__file__).resolve().parent
     data = Path(os.environ.get('XDG_DATA_HOME', str(Path.home() / '.local/share')))
     config = Path(os.environ.get('XDG_CONFIG_HOME', str(Path.home() / '.config')))
+    if not data.is_absolute() or not config.is_absolute():
+        parser.error('XDG_DATA_HOME and XDG_CONFIG_HOME must be absolute paths.')
     target = data / 'quotadock'
     target.mkdir(parents=True, exist_ok=True)
     for name in ('quotadock.py', 'limits.py', 'launch.sh', 'README.md', 'LICENSE', 'uninstall.py', 'quotadock.svg'):
@@ -35,13 +52,13 @@ def main():
     ])
     applications = data / 'applications'
     applications.mkdir(parents=True, exist_ok=True)
-    (applications / 'quotadock.desktop').write_text(desktop, encoding='utf-8')
+    atomic_write(applications / 'quotadock.desktop', desktop)
     autostart = config / 'autostart/quotadock.desktop'
     if args.no_autostart:
         autostart.unlink(missing_ok=True)
     else:
         autostart.parent.mkdir(parents=True, exist_ok=True)
-        autostart.write_text(desktop, encoding='utf-8')
+        atomic_write(autostart, desktop)
     print('Installed! Open QuotaDock from your application menu.')
     print('Start at login: ' + ('disabled' if args.no_autostart else 'enabled'))
 

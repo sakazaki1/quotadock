@@ -45,6 +45,7 @@ def executable():
 class QuotaClient(QObject):
     updated = pyqtSignal(dict)
     failed = pyqtSignal(str)
+    MAX_MESSAGE_BYTES = 1024 * 1024
 
     def __init__(self):
         super().__init__()
@@ -103,9 +104,28 @@ class QuotaClient(QObject):
         self.pending = self.send('initialize', {'clientInfo': {'name': 'quotadock', 'version': '1.0.0'}})
 
     def read(self):
-        self.buffer += bytes(self.process.readAllStandardOutput())
-        while b'\n' in self.buffer:
-            line, self.buffer = self.buffer.split(b'\n', 1)
+        if self.stopping or self.retry.isActive():
+            self.process.readAllStandardOutput()
+            return
+        self.consume(bytes(self.process.readAllStandardOutput()))
+
+    def consume(self, data):
+        while data:
+            end = data.find(b'\n')
+            if end < 0:
+                if len(self.buffer) + len(data) > self.MAX_MESSAGE_BYTES:
+                    self.buffer = b''
+                    self.abort('Codex response exceeded the size limit. Reconnecting…')
+                    return
+                self.buffer += data
+                return
+            if len(self.buffer) + end > self.MAX_MESSAGE_BYTES:
+                self.buffer = b''
+                self.abort('Codex response exceeded the size limit. Reconnecting…')
+                return
+            line = self.buffer + data[:end]
+            self.buffer = b''
+            data = data[end + 1:]
             try:
                 msg = json.loads(line)
             except (ValueError, UnicodeError):
@@ -163,7 +183,8 @@ class QuotaClient(QObject):
         self.poll.stop()
         self.timeout.stop()
         self.initialized = False
-        if not self.stopping:
+        self.pending = None
+        if not self.stopping and not self.retry.isActive():
             self.failed.emit('Connection closed. Reconnecting…')
             self.retry.start()
 
@@ -189,9 +210,14 @@ class X11AppWindowWatcher(QObject):
         self.xwininfo = shutil.which('xwininfo')
         self.process = QProcess(self)
         self.process.finished.connect(self.finished)
+        self.process.errorOccurred.connect(lambda _: self.fail())
         self.timer = QTimer(self)
         self.timer.setInterval(750)
         self.timer.timeout.connect(self.poll)
+        self.timeout = QTimer(self)
+        self.timeout.setSingleShot(True)
+        self.timeout.setInterval(2000)
+        self.timeout.timeout.connect(self.fail)
         self.stage = None
         self.last_target_id = None
         self.last_target_active = False
@@ -203,27 +229,48 @@ class X11AppWindowWatcher(QObject):
 
     def stop(self):
         self.timer.stop()
+        self.timeout.stop()
+        self.stage = None
         if self.process.state() != QProcess.ProcessState.NotRunning:
             self.process.kill()
-        self.stage = None
         self.last_target_active = False
 
     def poll(self):
-        if self.stage is not None:
+        if self.stage is not None or self.process.state() != QProcess.ProcessState.NotRunning:
             return
         if not self.xprop or not self.xwininfo:
             self.last_target_active = False
             self.changed.emit(False, QRect())
             return
-        self.stage = 'active'
-        self.process.start(self.xprop, ['-root', '_NET_ACTIVE_WINDOW'])
+        self.command('active', self.xprop, ['-root', '_NET_ACTIVE_WINDOW'])
+
+    def command(self, stage, program, arguments):
+        self.stage = stage
+        self.timeout.start()
+        self.process.start(program, arguments)
+
+    def fail(self):
+        self.timeout.stop()
+        self.stage = None
+        self.current_id = None
+        self.last_target_id = None
+        self.last_target_active = False
+        if self.process.state() != QProcess.ProcessState.NotRunning:
+            self.process.kill()
+        self.changed.emit(False, QRect())
 
     @staticmethod
     def window_id(output):
         match = re.search(rb'window id # (0x[0-9a-fA-F]+)', output)
         return match.group(1).decode() if match else None
 
-    def finished(self, *_):
+    def finished(self, exit_code=0, *_):
+        self.timeout.stop()
+        if self.stage is None:
+            return
+        if exit_code != 0:
+            self.fail()
+            return
         output = bytes(self.process.readAllStandardOutput())
         stage, self.stage = self.stage, None
         if stage == 'active':
@@ -238,8 +285,7 @@ class X11AppWindowWatcher(QObject):
                     self.changed.emit(False, QRect())
             else:
                 self.current_id = active_id
-                self.stage = 'identity'
-                self.process.start(self.xprop, ['-id', active_id, '_NET_WM_NAME', 'WM_CLASS', '_NET_WM_PID'])
+                self.command('identity', self.xprop, ['-id', active_id, '_NET_WM_NAME', 'WM_CLASS', '_NET_WM_PID'])
         elif stage == 'identity':
             identity = output.decode(errors='ignore').casefold()
             pid_match = re.search(r'_net_wm_pid.*?=\s*(\d+)', identity)
@@ -279,8 +325,7 @@ class X11AppWindowWatcher(QObject):
                 self.changed.emit(False, QRect())
 
     def read_geometry(self, window_id):
-        self.stage = 'geometry'
-        self.process.start(self.xwininfo, ['-id', window_id])
+        self.command('geometry', self.xwininfo, ['-id', window_id])
 
 
 if sys.platform == 'win32':
@@ -434,6 +479,9 @@ class Bar(QWidget):
         self.choices(panel_menu, [('primary', 'Hours only'), ('secondary', 'Weekly only'), ('both', 'Hours and weekly')], self.panels, self.set_panels)
         self.menu.addAction('Reset window position').triggered.connect(self.center)
         self.menu.addSeparator()
+        self.menu.addAction('Copy Codex executable path').triggered.connect(
+            lambda: QApplication.clipboard().setText(executable() or 'Codex executable not found')
+        )
         self.menu.addAction('QuotaDock on GitHub').triggered.connect(
             lambda: QDesktopServices.openUrl(QUrl('https://github.com/sakazaki1/quotadock'))
         )
