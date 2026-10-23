@@ -2,7 +2,7 @@
 
 **Your remaining Codex quota, always within reach.**
 
-QuotaDock is a lightweight Linux desktop companion that shows your real remaining Codex quota in a movable floating window and a live system-tray icon. Built for Kubuntu and KDE Plasma, it keeps usage visible without opening the usage settings after every action.
+QuotaDock is a lightweight Linux desktop companion that shows your real remaining Codex quota in a compact overlay anchored to the active ChatGPT/Codex window, with a live system-tray icon. Built for Kubuntu and KDE Plasma, it keeps usage visible without opening the usage settings after every action.
 
 It reads server-reported percentages from the local Codex app server. It does not count messages or estimate token consumption.
 
@@ -12,7 +12,8 @@ It reads server-reported percentages from the local Codex app server. It does no
 - **Live tray icon:** remaining percentage and proportional quota bars, with full values available on hover.
 - **Automatic refresh:** polls every 30 seconds and accepts quota notifications received on its connection.
 - **Next reset time:** visible below the hours panel, in your computer's local time zone.
-- **Minimal interface:** compact by default; detailed mode is available in the menu.
+- **Compact bar theme:** shows only the remaining percentage and its progress bar, with no app name or labels.
+- **ChatGPT/Codex-only overlay:** by default the small pop-up stays inside the active ChatGPT/Codex window and hides when you switch to another app.
 - **Minimize to tray:** keep monitoring in the background and click the icon to restore.
 - **Choose your panels:** hours only, weekly only, or both.
 - **Solid or translucent theme:** three background opacity levels, with readable opaque text.
@@ -25,7 +26,7 @@ It reads server-reported percentages from the local Codex app server. It does no
 
 Tested on **Kubuntu 26.04, KDE Plasma, Wayland with XWayland**, Python 3 and PyQt6. Other Linux desktops may work but have not been verified. Windows and macOS are not currently supported.
 
-QuotaDock is a standalone companion, **not a plugin injected into ChatGPT**. It floats above normal windows and also works from the system tray. It does not modify the official application.
+QuotaDock is a standalone companion, **not a plugin injected into ChatGPT**. By default it anchors its pop-up to the active ChatGPT/Codex window and hides when that window loses focus. This uses the X11/XWayland window information tools (`xprop` and `xwininfo`); if those tools or a detectable XWayland window are unavailable, the app-only overlay stays hidden. Turn off **Show only over ChatGPT/Codex** in the tray menu to use it as a regular floating window. It does not modify the official application.
 
 The displayed quota belongs to the account authenticated in the **local Codex runtime**. It is not a universal meter for every model or feature in regular ChatGPT chats. Some plans may omit one of the quota windows.
 
@@ -81,11 +82,14 @@ To use this override from the application menu as well, configure the environmen
 | Control | Action |
 | --- | --- |
 | Drag the title | Move the floating window |
-| Drag any edge or corner | Resize the window |
+| Drag any edge or corner | Resize the window; compact and full window sizes are saved separately |
 | **−** | Minimize to the tray without stopping updates |
 | Left-click the tray icon | Show or hide the window |
 | Right-click the tray icon / **⋮** | Open the settings menu |
 | **Minimal interface** | Switch compact/detailed layout |
+| **Display style → Bar and percentage only** | Hide the title and labels and show a small usage bar with its remaining percentage; drag the bar to move it and right-click for options |
+| **Display style → Full window** | Leave minimal mode and restore the full quota panel |
+| **Show only over ChatGPT/Codex** | Keep the pop-up inside the active ChatGPT/Codex window and hide it elsewhere |
 | **Visible panels** | Select hours, weekly, or both |
 | **Theme** | Choose solid or translucent; adjust background opacity |
 | **Refresh now** | Request an immediate reading |
@@ -112,7 +116,7 @@ QuotaDock is an independent community project and is not affiliated with or endo
 
 **No percentage appears:** check your Codex sign-in and executable location. Missing or inaccessible quota is shown as unavailable rather than 100%.
 
-**Cannot move, resize or keep the window above other windows:** on KDE Wayland, the launcher uses XWayland when available. Ensure XWayland is installed and check for custom KWin window rules. The system tray remains usable independently.
+**Cannot move or resize the compact bar:** drag its center to move, drag a narrow edge to resize, or right-click it to open the menu. In full-window mode, drag the title to move and any edge or corner to resize. On KDE Wayland, the launcher uses XWayland when available; check for custom KWin window rules if the compositor blocks these actions.
 
 **Window is hidden:** click the tray icon, or use its right-click menu → **Show / hide QuotaDock**. Use **Reset window position** if it is offscreen. Without a system tray, minimizing falls back to a regular taskbar entry.
 

@@ -3,13 +3,14 @@
 import argparse
 import json
 import os
+import re
 import shutil
 import sys
 import time
 from datetime import datetime
 from pathlib import Path
 
-from PyQt6.QtCore import QEvent, QPoint, QSize, QLockFile, QObject, QProcess, QSettings, QStandardPaths, Qt, QTimer, pyqtSignal
+from PyQt6.QtCore import QEvent, QPoint, QRect, QSize, QLockFile, QObject, QProcess, QSettings, QStandardPaths, Qt, QTimer, pyqtSignal
 from PyQt6.QtGui import QActionGroup, QAction, QColor, QFont, QIcon, QPainter, QPixmap
 from PyQt6.QtWidgets import QApplication, QFrame, QHBoxLayout, QLabel, QMenu, QProgressBar, QPushButton, QSystemTrayIcon, QVBoxLayout, QWidget
 from limits import codex_bucket, remaining, window_label
@@ -164,6 +165,111 @@ class QuotaClient(QObject):
                 self.process.waitForFinished(500)
 
 
+class AppWindowWatcher(QObject):
+    """Follow the active ChatGPT/Codex window through the X11 bridge on KDE."""
+    changed = pyqtSignal(bool, QRect)
+
+    def __init__(self, own_window, parent=None):
+        super().__init__(parent)
+        self.own_window = own_window
+        self.xprop = shutil.which('xprop')
+        self.xwininfo = shutil.which('xwininfo')
+        self.process = QProcess(self)
+        self.process.finished.connect(self.finished)
+        self.timer = QTimer(self)
+        self.timer.setInterval(750)
+        self.timer.timeout.connect(self.poll)
+        self.stage = None
+        self.last_target_id = None
+        self.last_target_active = False
+        self.current_id = None
+
+    def start(self):
+        self.timer.start()
+        self.poll()
+
+    def stop(self):
+        self.timer.stop()
+        if self.process.state() != QProcess.ProcessState.NotRunning:
+            self.process.kill()
+        self.stage = None
+        self.last_target_active = False
+
+    def poll(self):
+        if self.stage is not None:
+            return
+        if not self.xprop or not self.xwininfo:
+            self.last_target_active = False
+            self.changed.emit(False, QRect())
+            return
+        self.stage = 'active'
+        self.process.start(self.xprop, ['-root', '_NET_ACTIVE_WINDOW'])
+
+    @staticmethod
+    def window_id(output):
+        match = re.search(rb'window id # (0x[0-9a-fA-F]+)', output)
+        return match.group(1).decode() if match else None
+
+    def finished(self, *_):
+        output = bytes(self.process.readAllStandardOutput())
+        stage, self.stage = self.stage, None
+        if stage == 'active':
+            active_id = self.window_id(output)
+            if not active_id:
+                self.last_target_active = False
+                self.changed.emit(False, QRect())
+            elif active_id == f'0x{int(self.own_window.winId()):x}':
+                if self.last_target_active and self.last_target_id:
+                    self.read_geometry(self.last_target_id)
+                else:
+                    self.changed.emit(False, QRect())
+            else:
+                self.current_id = active_id
+                self.stage = 'identity'
+                self.process.start(self.xprop, ['-id', active_id, '_NET_WM_NAME', 'WM_CLASS', '_NET_WM_PID'])
+        elif stage == 'identity':
+            identity = output.decode(errors='ignore').casefold()
+            pid_match = re.search(r'_net_wm_pid.*?=\s*(\d+)', identity)
+            if pid_match and int(pid_match.group(1)) == os.getpid():
+                if self.last_target_active and self.last_target_id:
+                    self.read_geometry(self.last_target_id)
+                else:
+                    self.changed.emit(False, QRect())
+            else:
+                class_match = re.search(r'wm_class.*?=\s*"([^"]*)",\s*"([^"]*)"', identity)
+                class_name = ' '.join(class_match.groups()) if class_match else ''
+                app_match = 'chatgpt' in class_name or 'codex' in class_name
+                if not app_match and pid_match:
+                    try:
+                        process_name = Path(f'/proc/{pid_match.group(1)}/comm').read_text(encoding='utf-8').casefold()
+                        app_match = 'chatgpt' in process_name or 'codex' in process_name
+                    except OSError:
+                        pass
+                if app_match:
+                    self.last_target_id = self.current_id
+                    self.last_target_active = True
+                    self.read_geometry(self.current_id)
+                else:
+                    self.last_target_active = False
+                    self.changed.emit(False, QRect())
+        elif stage == 'geometry':
+            values = {}
+            for key in ('Absolute upper-left X', 'Absolute upper-left Y', 'Width', 'Height'):
+                match = re.search(rb'^\s*' + re.escape(key.encode()) + rb':\s*(-?\d+)', output, re.MULTILINE)
+                if match:
+                    values[key] = int(match.group(1))
+            if len(values) == 4 and values['Width'] > 0 and values['Height'] > 0:
+                rect = QRect(values['Absolute upper-left X'], values['Absolute upper-left Y'], values['Width'], values['Height'])
+                self.changed.emit(True, rect)
+            else:
+                self.last_target_active = False
+                self.changed.emit(False, QRect())
+
+    def read_geometry(self, window_id):
+        self.stage = 'geometry'
+        self.process.start(self.xwininfo, ['-id', window_id])
+
+
 class Handle(QLabel):
     def mousePressEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton:
@@ -185,6 +291,12 @@ class Bar(QWidget):
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         self.theme = self.settings.value('theme', 'solid')
         self.panels = self.settings.value('panels', 'both')
+        self.display_mode = self.settings.value('displayMode', 'compact_bar')
+        self.app_only = self.settings.value('appOnly', True, type=bool)
+        self.app_offset_right = self.settings.value('appOffsetRight', 12, type=int)
+        self.app_offset_top = self.settings.value('appOffsetTop', 72, type=int)
+        self.host_rect = QRect()
+        self._placing = False
         self.transparency = self.settings.value('transparency', 175, type=int)
         self.expanded_size = None
         self.minimal = self.settings.value('minimal', True, type=bool)
@@ -226,7 +338,24 @@ class Bar(QWidget):
         menu_button = QPushButton('⋮')
         menu_button.setAccessibleName('QuotaDock options')
         header.addWidget(menu_button)
-        layout.addLayout(header)
+        self.header = QWidget()
+        self.header.setLayout(header)
+        layout.addWidget(self.header)
+        self.compact_widget = QWidget()
+        compact_layout = QHBoxLayout(self.compact_widget)
+        compact_layout.setContentsMargins(5, 3, 5, 3)
+        compact_layout.setSpacing(6)
+        self.compact_progress = QProgressBar()
+        self.compact_progress.setRange(0, 1000)
+        self.compact_progress.setTextVisible(False)
+        self.compact_progress.setAccessibleName('Remaining quota')
+        self.compact_percentage = QLabel('—')
+        self.compact_percentage.setObjectName('compactPercentage')
+        self.compact_percentage.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        compact_layout.addWidget(self.compact_progress, 1)
+        compact_layout.addWidget(self.compact_percentage)
+        layout.addWidget(self.compact_widget)
+        self.compact_widget.hide()
         self.body = QWidget()
         body_layout = QVBoxLayout(self.body)
         body_layout.setContentsMargins(0, 0, 0, 0)
@@ -265,10 +394,16 @@ class Bar(QWidget):
         layout.addWidget(self.status)
         self.menu = QMenu(self)
         self.menu.addAction('Show / hide QuotaDock').triggered.connect(self.toggle_window)
-        minimal_action = self.menu.addAction('Minimal interface')
-        minimal_action.setCheckable(True)
-        minimal_action.setChecked(self.minimal)
-        minimal_action.toggled.connect(self.set_minimal)
+        self.minimal_action = self.menu.addAction('Minimal interface')
+        self.minimal_action.setCheckable(True)
+        self.minimal_action.setChecked(self.minimal)
+        self.minimal_action.toggled.connect(self.set_minimal)
+        display_menu = self.menu.addMenu('Display style')
+        self.display_actions = self.choices(display_menu, [('standard', 'Full window'), ('compact_bar', 'Bar and percentage only')], self.display_mode, self.set_display_mode)
+        app_only_action = self.menu.addAction('Show only over ChatGPT/Codex')
+        app_only_action.setCheckable(True)
+        app_only_action.setChecked(self.app_only)
+        app_only_action.toggled.connect(self.set_app_only)
         refresh = self.menu.addAction('Refresh now')
         refresh.triggered.connect(self.client.refresh)
         theme_menu = self.menu.addMenu('Theme')
@@ -281,6 +416,11 @@ class Bar(QWidget):
         self.menu.addSeparator()
         self.menu.addAction('Quit').triggered.connect(QApplication.instance().quit)
         menu_button.setMenu(self.menu)
+        for widget in (self.compact_widget, self.compact_progress, self.compact_percentage):
+            widget.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+            widget.customContextMenuRequested.connect(
+                lambda point, target=widget: self.menu.popup(target.mapToGlobal(point))
+            )
         pixmap = QPixmap(32, 32)
         pixmap.fill(QColor('#202824'))
         painter = QPainter(pixmap)
@@ -313,6 +453,12 @@ class Bar(QWidget):
         self.age.setInterval(1000)
         self.age.timeout.connect(self.tick)
         self.age.start()
+        self.window_watcher = AppWindowWatcher(self, self)
+        self.window_watcher.changed.connect(self.app_window_changed)
+        if self.app_only:
+            self.hide()
+            self.window_watcher.start()
+        self.set_display_mode(self.display_mode)
 
     def choices(self, menu, options, selected, callback):
         group = QActionGroup(menu)
@@ -348,9 +494,62 @@ class Bar(QWidget):
             widget.setVisible(panels == 'both' or panels == ('primary', 'secondary')[index])
         if save:
             self.settings.setValue('panels', panels)
-        self.setMinimumHeight((140 if panels == 'both' else 100) if self.minimal else (190 if panels == 'both' else 145))
+        if self.display_mode != 'compact_bar':
+            self.setMinimumHeight((140 if panels == 'both' else 100) if self.minimal else (190 if panels == 'both' else 145))
         if hasattr(self, 'tray'):
             self.update_tray()
+
+    def set_display_mode(self, mode):
+        self.display_mode = mode
+        self.settings.setValue('displayMode', mode)
+        compact = mode == 'compact_bar'
+        if not compact and self.minimal:
+            self.minimal = False
+            self.settings.setValue('minimal', False)
+            self.minimal_action.setChecked(False)
+            self.apply_minimal()
+        self.header.setVisible(not compact)
+        self.body.setVisible(not compact)
+        self.status.setVisible(not compact and (not self.minimal or self.is_failed))
+        self.compact_widget.setVisible(compact)
+        if compact:
+            self.setMinimumSize(112, 38)
+            self.resize(self.settings.value('compactWidth', 152, type=int), self.settings.value('compactHeight', 42, type=int))
+        else:
+            self.setMinimumSize(210, 115)
+            self.resize(self.settings.value('fullWidth', 310, type=int), self.settings.value('fullHeight', 230, type=int))
+        self.paint_quota()
+
+    def set_app_only(self, enabled):
+        self.app_only = enabled
+        self.settings.setValue('appOnly', enabled)
+        if enabled:
+            self.hide()
+            self.window_watcher.start()
+        else:
+            self.window_watcher.stop()
+            self.showNormal()
+            self.raise_()
+
+    def app_window_changed(self, active, rect):
+        if not self.app_only:
+            return
+        if not active or rect.isNull():
+            self.hide()
+            return
+        self.host_rect = QRect(rect)
+        margin = 12
+        width = min(self.width(), max(1, rect.width() - margin * 2))
+        height = min(self.height(), max(1, rect.height() - margin * 2))
+        x = max(rect.left() + margin, rect.right() - width - self.app_offset_right + 1)
+        y = min(rect.top() + self.app_offset_top, rect.bottom() - height - margin + 1)
+        y = max(rect.top() + margin, y)
+        self._placing = True
+        self.setGeometry(x, y, width, height)
+        self._placing = False
+        if not self.isVisible():
+            self.show()
+        self.raise_()
 
     def edge_at(self, point):
         edges = Qt.Edge(0)
@@ -379,6 +578,12 @@ class Bar(QWidget):
                 if event.type() == QEvent.Type.MouseButtonPress and event.button() == Qt.MouseButton.LeftButton:
                     self.windowHandle().startSystemResize(edges)
                     return True
+            elif (self.display_mode == 'compact_bar' and event.type() == QEvent.Type.MouseButtonPress
+                  and event.button() == Qt.MouseButton.LeftButton):
+                handle = self.windowHandle()
+                if handle is not None:
+                    handle.startSystemMove()
+                    return True
             watched.setCursor(Qt.CursorShape.SizeAllCursor if not edges and watched.objectName() == 'title' else cursor)
         return super().eventFilter(watched, event)
 
@@ -392,11 +597,21 @@ class Bar(QWidget):
                 value.setStyleSheet(f'font-size: {round(18 * scale)}px; font-weight: bold;')
                 progress.setMinimumHeight(round(7 * scale))
         if hasattr(self, 'settings') and self.isVisible():
-            self.settings.setValue('geometry', self.saveGeometry())
+            if self.app_only and not self._placing:
+                prefix = 'compact' if self.display_mode == 'compact_bar' else 'full'
+                self.settings.setValue(f'{prefix}Width', self.width())
+                self.settings.setValue(f'{prefix}Height', self.height())
+            elif not self.app_only:
+                self.settings.setValue('geometry', self.saveGeometry())
 
     def moveEvent(self, event):
         super().moveEvent(event)
-        if self.isVisible():
+        if self.isVisible() and self.app_only and not self._placing and not self.host_rect.isNull():
+            self.app_offset_right = max(0, self.host_rect.right() - self.geometry().right())
+            self.app_offset_top = max(0, self.y() - self.host_rect.top())
+            self.settings.setValue('appOffsetRight', self.app_offset_right)
+            self.settings.setValue('appOffsetTop', self.app_offset_top)
+        elif self.isVisible() and not self.app_only:
             self.settings.setValue('geometry', self.saveGeometry())
 
     def center(self):
@@ -408,11 +623,12 @@ class Bar(QWidget):
         self.settings.setValue('minimal', enabled)
         self.apply_minimal()
         self.set_panels(self.panels, save=False)
-        self.resize(240, 150 if self.panels == 'both' else 115) if enabled else self.resize(310, 230)
+        if self.display_mode != 'compact_bar':
+            self.resize(240, 150 if self.panels == 'both' else 115) if enabled else self.resize(310, 230)
         self.paint_quota()
 
     def apply_minimal(self):
-        self.status.setVisible(not self.minimal or self.is_failed)
+        self.status.setVisible(self.display_mode != 'compact_bar' and (not self.minimal or self.is_failed))
 
     def minimize_to_tray(self):
         if QSystemTrayIcon.isSystemTrayAvailable():
@@ -423,6 +639,9 @@ class Bar(QWidget):
             self.showMinimized()
 
     def toggle_window(self):
+        if self.app_only:
+            self.window_watcher.poll()
+            return
         if self.isVisible() and not self.isMinimized():
             self.minimize_to_tray()
         else:
@@ -501,6 +720,15 @@ class Bar(QWidget):
                     pass
             value.setToolTip(tip)
             progress.setToolTip(tip)
+        selected_index = 1 if self.panels == 'secondary' else 0
+        selected_window = self.bucket.get(('primary', 'secondary')[selected_index]) if self.bucket else None
+        compact_amount = remaining(selected_window)
+        self.compact_percentage.setText(f'{compact_amount:g}%' if compact_amount is not None else '—')
+        self.compact_progress.setValue(round(compact_amount * 10) if compact_amount is not None else 0)
+        compact_color = '#7e8982' if self.is_failed or compact_amount is None else '#7fe7b2' if compact_amount > 25 else '#ffd17e' if compact_amount > 10 else '#ff9292'
+        self.compact_progress.setStyleSheet(f'QProgressBar::chunk {{ background: {compact_color}; border-radius: 4px; }}')
+        self.compact_progress.setEnabled(not self.is_failed and compact_amount is not None)
+        self.compact_widget.setToolTip(self.rows[selected_index][2].toolTip())
         self.apply_minimal()
         self.update_tray()
 
@@ -527,6 +755,8 @@ class Bar(QWidget):
     def cleanup(self):
         QApplication.instance().removeEventFilter(self)
         self.settings.setValue('geometry', self.saveGeometry())
+        if hasattr(self, 'window_watcher'):
+            self.window_watcher.stop()
         self.client.stop()
 
 
@@ -545,7 +775,8 @@ def main():
         return 0
     bar = Bar()
     app.aboutToQuit.connect(bar.cleanup)
-    bar.show()
+    if not bar.app_only:
+        bar.show()
     if args.smoke_test:
         bar.update_quota({'primary': {'usedPercent': 6, 'windowDurationMins': 300}, 'secondary': {'usedPercent': 1, 'windowDurationMins': 10080}})
         assert bar.rows[0][1].text() == '94%'
