@@ -1,10 +1,12 @@
 #!/usr/bin/python3
 """Native movable quota monitor for KDE. Uses the signed-in local Codex app-server."""
 import argparse
+import ctypes
 import json
 import os
 import re
 import shutil
+import subprocess
 import sys
 import time
 from datetime import datetime
@@ -554,7 +556,89 @@ class Bar(QWidget):
         self._placing = False
         if not self.isVisible():
             self.show()
+            QTimer.singleShot(0, self.hide_from_taskbar)
         self.raise_()
+
+    def hide_from_taskbar(self):
+        """Keep the floating monitor in the tray without a task-manager button."""
+        if not os.environ.get('DISPLAY'):
+            return
+        window_id = f'0x{int(self.winId()):x}'
+        wmctrl = shutil.which('wmctrl')
+        if wmctrl:
+            try:
+                result = subprocess.run(
+                    [wmctrl, '-ir', window_id, '-b', 'add,skip_taskbar'],
+                    capture_output=True, timeout=1, check=False,
+                )
+                if result.returncode == 0:
+                    return
+            except (OSError, subprocess.TimeoutExpired):
+                pass
+        try:
+            x11 = ctypes.CDLL('libX11.so.6')
+            x11.XOpenDisplay.restype = ctypes.c_void_p
+            x11.XOpenDisplay.argtypes = [ctypes.c_char_p]
+            display = x11.XOpenDisplay(None)
+            if display:
+                class ClientMessageData(ctypes.Union):
+                    _fields_ = [('b', ctypes.c_char * 20), ('s', ctypes.c_short * 10), ('l', ctypes.c_long * 5)]
+
+                class ClientMessageEvent(ctypes.Structure):
+                    _fields_ = [
+                        ('type', ctypes.c_int), ('serial', ctypes.c_ulong),
+                        ('send_event', ctypes.c_int), ('display', ctypes.c_void_p),
+                        ('window', ctypes.c_ulong), ('message_type', ctypes.c_ulong),
+                        ('format', ctypes.c_int), ('data', ClientMessageData),
+                    ]
+
+                class XEvent(ctypes.Union):
+                    _fields_ = [('type', ctypes.c_int), ('xclient', ClientMessageEvent), ('pad', ctypes.c_long * 24)]
+
+                x11.XDefaultRootWindow.restype = ctypes.c_ulong
+                x11.XDefaultRootWindow.argtypes = [ctypes.c_void_p]
+                x11.XInternAtom.restype = ctypes.c_ulong
+                x11.XInternAtom.argtypes = [ctypes.c_void_p, ctypes.c_char_p, ctypes.c_int]
+                x11.XSendEvent.restype = ctypes.c_int
+                x11.XSendEvent.argtypes = [ctypes.c_void_p, ctypes.c_ulong, ctypes.c_int, ctypes.c_long, ctypes.POINTER(XEvent)]
+                x11.XFlush.argtypes = [ctypes.c_void_p]
+                x11.XCloseDisplay.argtypes = [ctypes.c_void_p]
+
+                state = x11.XInternAtom(display, b'_NET_WM_STATE', 0)
+                skip_taskbar = x11.XInternAtom(display, b'_NET_WM_STATE_SKIP_TASKBAR', 0)
+                event = XEvent()
+                event.xclient = ClientMessageEvent(
+                    33, 0, 1, display, int(self.winId()), state, 32,
+                    ClientMessageData(l=(1, skip_taskbar, 0, 0, 0)),
+                )
+                root = x11.XDefaultRootWindow(display)
+                sent = x11.XSendEvent(display, root, 0, (1 << 19) | (1 << 20), ctypes.byref(event))
+                x11.XFlush(display)
+                x11.XCloseDisplay(display)
+                if sent:
+                    return
+        except (OSError, AttributeError, TypeError, ValueError):
+            pass
+        xprop = shutil.which('xprop')
+        if not xprop:
+            return
+        try:
+            current = subprocess.run(
+                [xprop, '-id', window_id, '_NET_WM_STATE'],
+                capture_output=True, text=True, timeout=1, check=False,
+            )
+            match = re.search(r'_NET_WM_STATE(?:\(ATOM\))?\s*=\s*(.*)', current.stdout)
+            states = re.findall(r'_NET_WM_STATE_[A-Z_]+', match.group(1)) if match else []
+            if '_NET_WM_STATE_SKIP_TASKBAR' in states:
+                return
+            states.append('_NET_WM_STATE_SKIP_TASKBAR')
+            subprocess.run(
+                [xprop, '-id', window_id, '-f', '_NET_WM_STATE', '32a', '-set',
+                 '_NET_WM_STATE', ', '.join(states)],
+                capture_output=True, timeout=1, check=False,
+            )
+        except (OSError, subprocess.TimeoutExpired):
+            pass
 
     def edge_at(self, point):
         edges = Qt.Edge(0)
@@ -783,6 +867,7 @@ def main():
     app.aboutToQuit.connect(bar.cleanup)
     if not bar.app_only:
         bar.show()
+        QTimer.singleShot(0, bar.hide_from_taskbar)
     if args.smoke_test:
         bar.update_quota({'primary': {'usedPercent': 6, 'windowDurationMins': 300}, 'secondary': {'usedPercent': 1, 'windowDurationMins': 10080}})
         assert bar.rows[0][1].text() == '94%'

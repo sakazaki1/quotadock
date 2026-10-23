@@ -14,7 +14,7 @@ It reads server-reported percentages from the local Codex app server. It does no
 - **Next reset time:** visible below the hours panel, in your computer's local time zone.
 - **Compact bar theme:** shows only the remaining percentage and its progress bar, with no app name or labels.
 - **ChatGPT/Codex-only overlay:** by default the small pop-up stays inside the active ChatGPT/Codex window and hides when you switch to another app.
-- **QuotaDock app icon:** a custom quota-meter icon appears in the application menu and on the taskbar; the system tray keeps its live usage indicator.
+- **QuotaDock app icon:** a custom quota-meter icon appears in the application menu. The floating window is hidden from the taskbar by default while the system tray keeps its live usage indicator.
 - **Choose your panels:** hours only, weekly only, or both.
 - **Solid or translucent theme:** three background opacity levels, with readable opaque text.
 - **Move and resize:** drag the title to move and the edges or corners to resize.
