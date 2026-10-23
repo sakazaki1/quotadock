@@ -5,7 +5,6 @@ import json
 import os
 import re
 import shutil
-import subprocess
 import sys
 import time
 from datetime import datetime
@@ -288,6 +287,7 @@ class Bar(QWidget):
         self.client.updated.connect(self.update_quota)
         self.client.failed.connect(self.error)
         self.setWindowTitle('QuotaDock — Codex usage monitor')
+        self.setWindowIcon(QIcon(str(Path(__file__).resolve().with_name('quotadock.svg'))))
         self.setWindowFlags(Qt.WindowType.FramelessWindowHint | Qt.WindowType.WindowStaysOnTopHint | Qt.WindowType.Tool)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         self.theme = self.settings.value('theme', 'solid')
@@ -534,7 +534,6 @@ class Bar(QWidget):
         else:
             self.window_watcher.stop()
             self.showNormal()
-            QTimer.singleShot(0, self.hide_from_taskbar)
             self.raise_()
 
     def app_window_changed(self, active, rect):
@@ -555,45 +554,7 @@ class Bar(QWidget):
         self._placing = False
         if not self.isVisible():
             self.show()
-            QTimer.singleShot(0, self.hide_from_taskbar)
         self.raise_()
-
-    def hide_from_taskbar(self):
-        """Keep the floating monitor available in the tray without a task-manager button."""
-        if not os.environ.get('DISPLAY'):
-            return
-        window_id = f'0x{int(self.winId()):x}'
-        wmctrl = shutil.which('wmctrl')
-        if wmctrl:
-            try:
-                result = subprocess.run(
-                    [wmctrl, '-ir', window_id, '-b', 'add,skip_taskbar'],
-                    capture_output=True, timeout=1, check=False,
-                )
-                if result.returncode == 0:
-                    return
-            except (OSError, subprocess.TimeoutExpired):
-                pass
-        xprop = shutil.which('xprop')
-        if not xprop:
-            return
-        try:
-            current = subprocess.run(
-                [xprop, '-id', window_id, '_NET_WM_STATE'],
-                capture_output=True, text=True, timeout=1, check=False,
-            )
-            match = re.search(r'_NET_WM_STATE(?:\(ATOM\))?\s*=\s*(.*)', current.stdout)
-            states = re.findall(r'_NET_WM_STATE_[A-Z_]+', match.group(1)) if match else []
-            if '_NET_WM_STATE_SKIP_TASKBAR' in states:
-                return
-            states.append('_NET_WM_STATE_SKIP_TASKBAR')
-            subprocess.run(
-                [xprop, '-id', window_id, '-f', '_NET_WM_STATE', '32a', '-set',
-                 '_NET_WM_STATE', ', '.join(states)],
-                capture_output=True, timeout=1, check=False,
-            )
-        except (OSError, subprocess.TimeoutExpired):
-            pass
 
     def edge_at(self, point):
         edges = Qt.Edge(0)
@@ -812,6 +773,7 @@ def main():
     import signal
     signal.signal(signal.SIGTERM, lambda *_: app.quit())
     app.setApplicationName('QuotaDock')
+    app.setWindowIcon(QIcon(str(Path(__file__).resolve().with_name('quotadock.svg'))))
     app.setQuitOnLastWindowClosed(False)
     runtime = QStandardPaths.writableLocation(QStandardPaths.StandardLocation.RuntimeLocation)
     lock = QLockFile(str(Path(runtime) / 'quotadock.lock'))
@@ -821,7 +783,6 @@ def main():
     app.aboutToQuit.connect(bar.cleanup)
     if not bar.app_only:
         bar.show()
-        QTimer.singleShot(0, bar.hide_from_taskbar)
     if args.smoke_test:
         bar.update_quota({'primary': {'usedPercent': 6, 'windowDurationMins': 300}, 'secondary': {'usedPercent': 1, 'windowDurationMins': 10080}})
         assert bar.rows[0][1].text() == '94%'

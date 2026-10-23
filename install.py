@@ -22,7 +22,7 @@ def main():
     config = Path(os.environ.get('XDG_CONFIG_HOME', str(Path.home() / '.config')))
     target = data / 'quotadock'
     target.mkdir(parents=True, exist_ok=True)
-    for name in ('quotadock.py', 'limits.py', 'launch.sh', 'README.md', 'LICENSE', 'uninstall.py'):
+    for name in ('quotadock.py', 'limits.py', 'launch.sh', 'README.md', 'LICENSE', 'uninstall.py', 'quotadock.svg'):
         if (source / name).resolve() != (target / name).resolve():
             shutil.copy2(source / name, target / name)
     (target / 'launch.sh').chmod(0o755)
@@ -30,7 +30,7 @@ def main():
         '[Desktop Entry]', 'Type=Application', 'Name=QuotaDock',
         'Comment=Live Codex quota in a floating window and system tray',
         'Exec=' + desktop_quote(target / 'launch.sh'),
-        'Icon=utilities-system-monitor', 'Terminal=false', 'Categories=Utility;',
+        'Icon=' + desktop_quote(target / 'quotadock.svg'), 'Terminal=false', 'Categories=Utility;',
         'StartupNotify=false', 'X-KDE-autostart-after=panel', '',
     ])
     applications = data / 'applications'
