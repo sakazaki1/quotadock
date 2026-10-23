@@ -1,0 +1,21 @@
+name: Tests
+on: [push, pull_request]
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install system Qt bindings
+        run: sudo apt-get update && sudo apt-get install -y python3-pyqt6
+      - name: Check Python syntax
+        run: python3 -m compileall -q .
+      - name: Test quota interpretation
+        run: python3 -m unittest discover -s . -p 'test_*.py'
+      - name: Test the UI without credentials
+        env:
+          QT_QPA_PLATFORM: offscreen
+          XDG_CONFIG_HOME: /tmp/quotadock-test
+          XDG_RUNTIME_DIR: /tmp/quotadock-runtime
+        run: python3 quotadock.py --smoke-test
