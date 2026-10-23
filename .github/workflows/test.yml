@@ -36,3 +36,9 @@ jobs:
         env:
           QT_QPA_PLATFORM: offscreen
         run: python quotadock.py --smoke-test
+      - name: Install for the current Windows user
+        run: python install_windows.py --no-autostart
+      - name: Test the installed copy
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: '& "$env:LOCALAPPDATA\QuotaDock\.venv\Scripts\python.exe" "$env:LOCALAPPDATA\QuotaDock\quotadock.py" --smoke-test'
