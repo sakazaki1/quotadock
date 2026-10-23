@@ -5,13 +5,14 @@ import json
 import os
 import re
 import shutil
+import subprocess
 import sys
 import time
 from datetime import datetime
 from pathlib import Path
 
-from PyQt6.QtCore import QEvent, QPoint, QRect, QSize, QLockFile, QObject, QProcess, QSettings, QStandardPaths, Qt, QTimer, pyqtSignal
-from PyQt6.QtGui import QActionGroup, QAction, QColor, QFont, QIcon, QPainter, QPixmap
+from PyQt6.QtCore import QEvent, QPoint, QRect, QSize, QLockFile, QObject, QProcess, QSettings, QStandardPaths, QUrl, Qt, QTimer, pyqtSignal
+from PyQt6.QtGui import QActionGroup, QAction, QColor, QDesktopServices, QFont, QIcon, QPainter, QPixmap
 from PyQt6.QtWidgets import QApplication, QFrame, QHBoxLayout, QLabel, QMenu, QProgressBar, QPushButton, QSystemTrayIcon, QVBoxLayout, QWidget
 from limits import codex_bucket, remaining, window_label
 
@@ -414,6 +415,10 @@ class Bar(QWidget):
         self.choices(panel_menu, [('primary', 'Hours only'), ('secondary', 'Weekly only'), ('both', 'Hours and weekly')], self.panels, self.set_panels)
         self.menu.addAction('Reset window position').triggered.connect(self.center)
         self.menu.addSeparator()
+        self.menu.addAction('QuotaDock on GitHub').triggered.connect(
+            lambda: QDesktopServices.openUrl(QUrl('https://github.com/sakazaki1/quotadock'))
+        )
+        self.menu.addSeparator()
         self.menu.addAction('Quit').triggered.connect(QApplication.instance().quit)
         menu_button.setMenu(self.menu)
         for widget in (self.compact_widget, self.compact_progress, self.compact_percentage):
@@ -529,6 +534,7 @@ class Bar(QWidget):
         else:
             self.window_watcher.stop()
             self.showNormal()
+            QTimer.singleShot(0, self.hide_from_taskbar)
             self.raise_()
 
     def app_window_changed(self, active, rect):
@@ -549,7 +555,45 @@ class Bar(QWidget):
         self._placing = False
         if not self.isVisible():
             self.show()
+            QTimer.singleShot(0, self.hide_from_taskbar)
         self.raise_()
+
+    def hide_from_taskbar(self):
+        """Keep the floating monitor available in the tray without a task-manager button."""
+        if not os.environ.get('DISPLAY'):
+            return
+        window_id = f'0x{int(self.winId()):x}'
+        wmctrl = shutil.which('wmctrl')
+        if wmctrl:
+            try:
+                result = subprocess.run(
+                    [wmctrl, '-ir', window_id, '-b', 'add,skip_taskbar'],
+                    capture_output=True, timeout=1, check=False,
+                )
+                if result.returncode == 0:
+                    return
+            except (OSError, subprocess.TimeoutExpired):
+                pass
+        xprop = shutil.which('xprop')
+        if not xprop:
+            return
+        try:
+            current = subprocess.run(
+                [xprop, '-id', window_id, '_NET_WM_STATE'],
+                capture_output=True, text=True, timeout=1, check=False,
+            )
+            match = re.search(r'_NET_WM_STATE(?:\(ATOM\))?\s*=\s*(.*)', current.stdout)
+            states = re.findall(r'_NET_WM_STATE_[A-Z_]+', match.group(1)) if match else []
+            if '_NET_WM_STATE_SKIP_TASKBAR' in states:
+                return
+            states.append('_NET_WM_STATE_SKIP_TASKBAR')
+            subprocess.run(
+                [xprop, '-id', window_id, '-f', '_NET_WM_STATE', '32a', '-set',
+                 '_NET_WM_STATE', ', '.join(states)],
+                capture_output=True, timeout=1, check=False,
+            )
+        except (OSError, subprocess.TimeoutExpired):
+            pass
 
     def edge_at(self, point):
         edges = Qt.Edge(0)
@@ -777,6 +821,7 @@ def main():
     app.aboutToQuit.connect(bar.cleanup)
     if not bar.app_only:
         bar.show()
+        QTimer.singleShot(0, bar.hide_from_taskbar)
     if args.smoke_test:
         bar.update_quota({'primary': {'usedPercent': 6, 'windowDurationMins': 300}, 'secondary': {'usedPercent': 1, 'windowDurationMins': 10080}})
         assert bar.rows[0][1].text() == '94%'

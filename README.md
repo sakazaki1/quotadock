@@ -14,7 +14,7 @@ It reads server-reported percentages from the local Codex app server. It does no
 - **Next reset time:** visible below the hours panel, in your computer's local time zone.
 - **Compact bar theme:** shows only the remaining percentage and its progress bar, with no app name or labels.
 - **ChatGPT/Codex-only overlay:** by default the small pop-up stays inside the active ChatGPT/Codex window and hides when you switch to another app.
-- **Minimize to tray:** keep monitoring in the background and click the icon to restore.
+- **System-tray only:** hide QuotaDock from the task manager while keeping its live usage icon in the system tray.
 - **Choose your panels:** hours only, weekly only, or both.
 - **Solid or translucent theme:** three background opacity levels, with readable opaque text.
 - **Move and resize:** drag the title to move and the edges or corners to resize.
@@ -83,8 +83,9 @@ To use this override from the application menu as well, configure the environmen
 | --- | --- |
 | Drag the title | Move the floating window |
 | Drag any edge or corner | Resize the window; compact and full window sizes are saved separately |
-| **−** | Minimize to the tray without stopping updates |
+| **−** | Hide the window while the tray indicator continues to update |
 | Left-click the tray icon | Show or hide the window |
+| **QuotaDock on GitHub** | Open the public repository |
 | Right-click the tray icon / **⋮** | Open the settings menu |
 | **Minimal interface** | Switch compact/detailed layout |
 | **Display style → Bar and percentage only** | Hide the title and labels and show a small usage bar with its remaining percentage; drag the bar to move it and right-click for options |
