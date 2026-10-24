@@ -43,7 +43,7 @@ def main():
     python = environment / 'Scripts' / 'python.exe'
     pythonw = environment / 'Scripts' / 'pythonw.exe'
     subprocess.run([str(python), '-m', 'pip', 'install', 'PyQt6>=6.5,<7'], check=True)
-    for name in ('quotadock.py', 'windows_watcher.py', 'limits.py', 'quotadock.svg'):
+    for name in ('quotadock.py', 'windows_watcher.py', 'limits.py', 'i18n.py', 'quotadock.svg'):
         shutil.copy2(source / name, target / name)
     menu = Path(roaming) / 'Microsoft' / 'Windows' / 'Start Menu' / 'Programs'
     startup = menu / 'Startup'

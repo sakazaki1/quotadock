@@ -19,6 +19,7 @@ It reads server-reported percentages from the local Codex app server. It does no
 - **Solid or translucent theme:** three background opacity levels, with readable opaque text.
 - **Move and resize:** drag the title to move and the edges or corners to resize.
 - **Saved preferences:** position, dimensions, theme and visible panels persist between sessions.
+- **Language:** English by default; switch to Portuguese in the settings menu without restarting.
 - **Optional login startup:** installs a desktop menu shortcut and can start automatically at login.
 - **Honest offline state:** missing values appear as `—`; stale data is grayed out and the tray icon shows `?`.
 
@@ -109,6 +110,7 @@ To use this override from the application menu as well, configure the environmen
 | **Copy Codex executable path** | Copy the resolved local Codex path for troubleshooting |
 | **Visible panels** | Select hours, weekly, or both |
 | **Theme** | Choose solid or translucent; adjust background opacity |
+| **Language** | Switch between English and Português; the choice is saved |
 | **Refresh now** | Request an immediate reading |
 | **Quit** | Stop QuotaDock and its helper process |
 

@@ -17,6 +17,7 @@ from PyQt6.QtCore import QEvent, QPoint, QRect, QSize, QLockFile, QObject, QProc
 from PyQt6.QtGui import QActionGroup, QAction, QColor, QDesktopServices, QFont, QIcon, QPainter, QPixmap
 from PyQt6.QtWidgets import QApplication, QFrame, QHBoxLayout, QLabel, QMenu, QProgressBar, QPushButton, QSystemTrayIcon, QVBoxLayout, QWidget
 from limits import codex_bucket, remaining, window_label
+from i18n import translate
 
 
 def executable():
@@ -344,6 +345,10 @@ class Bar(QWidget):
     def __init__(self):
         super().__init__()
         self.settings = QSettings('QuotaDock', 'QuotaDock')
+        self.language = self.settings.value('language', 'en')
+        if self.language not in ('en', 'pt'):
+            self.language = 'en'
+        self.last_error_message = None
         self.last_update = 0
         self.bucket = None
         self.is_failed = True
@@ -401,6 +406,7 @@ class Bar(QWidget):
         self.compact.clicked.connect(self.minimize_to_tray)
         header.addWidget(self.compact)
         menu_button = QPushButton('⋮')
+        self.menu_button = menu_button
         menu_button.setAccessibleName('QuotaDock options')
         header.addWidget(menu_button)
         self.header = QWidget()
@@ -478,15 +484,19 @@ class Bar(QWidget):
         panel_menu = self.menu.addMenu('Visible panels')
         self.choices(panel_menu, [('primary', 'Hours only'), ('secondary', 'Weekly only'), ('both', 'Hours and weekly')], self.panels, self.set_panels)
         self.menu.addAction('Reset window position').triggered.connect(self.center)
+        language_menu = self.menu.addMenu('Language')
+        self.language_actions = self.choices(language_menu, [('en', 'English'), ('pt', 'Português')], self.language, self.set_language)
         self.menu.addSeparator()
         self.menu.addAction('Copy Codex executable path').triggered.connect(
-            lambda: QApplication.clipboard().setText(executable() or 'Codex executable not found')
+            lambda: QApplication.clipboard().setText(executable() or self.t('Codex executable not found'))
         )
         self.menu.addAction('QuotaDock on GitHub').triggered.connect(
             lambda: QDesktopServices.openUrl(QUrl('https://github.com/sakazaki1/quotadock'))
         )
         self.menu.addSeparator()
         self.menu.addAction('Quit').triggered.connect(QApplication.instance().quit)
+        self.menu_texts = []
+        self.collect_menu_texts(self.menu)
         menu_button.setMenu(self.menu)
         for widget in (self.compact_widget, self.compact_progress, self.compact_percentage):
             widget.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
@@ -531,6 +541,41 @@ class Bar(QWidget):
             self.hide()
             self.window_watcher.start()
         self.set_display_mode(self.display_mode)
+        self.retranslate_ui()
+
+    def t(self, text):
+        return translate(text, self.language)
+
+    def collect_menu_texts(self, menu):
+        for action in menu.actions():
+            if action.text():
+                self.menu_texts.append((action, action.text()))
+            if action.menu():
+                self.collect_menu_texts(action.menu())
+
+    def set_language(self, language):
+        self.language = language
+        self.settings.setValue('language', language)
+        self.retranslate_ui()
+
+    def retranslate_ui(self):
+        self.setWindowTitle(self.t('QuotaDock — Codex usage monitor'))
+        for action, english in self.menu_texts:
+            action.setText(self.t(english))
+        self.header.findChild(QLabel, 'title').setToolTip(self.t('Drag to position over your app'))
+        self.compact.setAccessibleName(self.t('Minimize to tray'))
+        self.compact.setToolTip(self.t('Minimize to tray; click the icon to restore'))
+        self.menu_button.setAccessibleName(self.t('QuotaDock options'))
+        self.compact_progress.setAccessibleName(self.t('Remaining quota'))
+        for index, (_, _, progress) in enumerate(self.rows):
+            progress.setAccessibleName(self.t(('Remaining quota: Window', 'Remaining quota: Week')[index]))
+        self.paint_quota()
+        if self.last_error_message is not None:
+            self.error(self.last_error_message)
+        elif not self.last_update:
+            self.status.setText(self.t('Connecting to Codex…'))
+        else:
+            self.tick()
 
     def choices(self, menu, options, selected, callback):
         group = QActionGroup(menu)
@@ -831,19 +876,20 @@ class Bar(QWidget):
                 painter.fillRect(7, 46 + line * 9, round(value / 2), 5, QColor(color))
         painter.end()
         self.tray.setIcon(QIcon(pixmap))
-        tips = ['QuotaDock • remaining' if not self.is_failed else 'QuotaDock • offline']
+        tips = [self.t('QuotaDock • remaining' if not self.is_failed else 'QuotaDock • offline')]
         for index in selected:
             window = windows[index]
             value = remaining(window)
-            tips.append(window_label(window, ('Hours', 'Week')[index]) + ': ' + (f'{value:g}%' if value is not None else 'unavailable'))
+            tips.append(self.t(window_label(window, ('Hours', 'Week')[index])) + ': ' + (f'{value:g}%' if value is not None else self.t('unavailable')))
         tips.append(self.reset_label.text())
-        tips.append('Click to show/hide; right-click for options.')
+        tips.append(self.t('Click to show/hide; right-click for options.'))
         self.tray.setToolTip('\n'.join(tips))
 
     def update_quota(self, bucket):
         self.bucket = bucket
         self.last_update = time.monotonic()
         self.is_failed = False
+        self.last_error_message = None
         self.paint_quota()
         self.tick()
 
@@ -851,7 +897,7 @@ class Bar(QWidget):
         for index, (label, value, progress) in enumerate(self.rows):
             window = self.bucket.get(('primary', 'secondary')[index]) if self.bucket else None
             amount = remaining(window)
-            label.setText(window_label(window, ('Window', 'Week')[index]))
+            label.setText(self.t(window_label(window, ('Window', 'Week')[index])))
             value.setText(f'{amount:g}%' if amount is not None else '—')
             progress.setValue(round(amount * 10) if amount is not None else 0)
             color = '#7fe7b2' if amount is not None and amount > 25 else '#ffd17e' if amount is not None and amount > 10 else '#ff9292'
@@ -859,17 +905,18 @@ class Bar(QWidget):
                 color = '#7e8982'
             progress.setStyleSheet(f'QProgressBar::chunk {{ background: {color}; border-radius: 4px; }}')
             progress.setEnabled(not self.is_failed and amount is not None)
-            tip = 'Remaining percentage reported by Codex.'
+            tip = self.t('Remaining percentage reported by Codex.')
             reset = window.get('resetsAt') if isinstance(window, dict) else None
             if index == 0:
-                self.reset_label.setText('Next reset: —')
+                self.reset_label.setText(self.t('Next reset: —'))
+                self.reset_label.setToolTip(self.t('Next reset: —'))
             if isinstance(reset, (int, float)):
                 try:
-                    reset_text = datetime.fromtimestamp(reset).strftime('%Y-%m-%d at %H:%M')
-                    tip += '\nResets: ' + reset_text
+                    reset_text = datetime.fromtimestamp(reset).strftime('%d/%m/%Y às %H:%M' if self.language == 'pt' else '%Y-%m-%d at %H:%M')
+                    tip += '\n' + self.t('Resets: ') + reset_text
                     if index == 0:
-                        self.reset_label.setText(('Resets at ' + datetime.fromtimestamp(reset).strftime('%H:%M')) if self.minimal else ('Next reset: ' + reset_text))
-                        self.reset_label.setToolTip('Next reset: ' + reset_text)
+                        self.reset_label.setText(self.t('Resets at {time}').format(time=datetime.fromtimestamp(reset).strftime('%H:%M')) if self.minimal else self.t('Next reset: {time}').format(time=reset_text))
+                        self.reset_label.setToolTip(self.t('Next reset: {time}').format(time=reset_text))
                 except (ValueError, OverflowError, OSError):
                     pass
             value.setToolTip(tip)
@@ -893,12 +940,13 @@ class Bar(QWidget):
         if age > 75 and not self.is_failed:
             self.error('Stale data. Waiting for Codex…')
         elif not self.is_failed:
-            self.status.setText(f'Remaining • updated {age}s ago')
-            self.setToolTip(f'Real quota • updated {age}s ago')
+            self.status.setText(self.t('Remaining • updated {age}s ago').format(age=age))
+            self.setToolTip(self.t('Real quota • updated {age}s ago').format(age=age))
 
     def error(self, message):
         self.is_failed = True
-        self.status.setText(message + (' Last reading shown in gray.' if self.last_update else ''))
+        self.last_error_message = message
+        self.status.setText(self.t(message) + (self.t(' Last reading shown in gray.') if self.last_update else ''))
         self.paint_quota()
         self.update_tray()
 

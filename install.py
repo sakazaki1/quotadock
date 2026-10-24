@@ -39,7 +39,7 @@ def main():
         parser.error('XDG_DATA_HOME and XDG_CONFIG_HOME must be absolute paths.')
     target = data / 'quotadock'
     target.mkdir(parents=True, exist_ok=True)
-    for name in ('quotadock.py', 'limits.py', 'launch.sh', 'README.md', 'LICENSE', 'uninstall.py', 'quotadock.svg'):
+    for name in ('quotadock.py', 'limits.py', 'i18n.py', 'launch.sh', 'README.md', 'LICENSE', 'uninstall.py', 'quotadock.svg'):
         if (source / name).resolve() != (target / name).resolve():
             shutil.copy2(source / name, target / name)
     (target / 'launch.sh').chmod(0o755)
