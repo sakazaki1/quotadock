@@ -771,10 +771,10 @@ class Bar(QWidget):
         for index, (_, _, progress) in enumerate(self.rows):
             progress.setAccessibleName(self.t(('Remaining quota: Window', 'Remaining quota: Week')[index]))
         self.paint_quota()
-        if self.overlay_warning is not None:
-            self.status.setText(self.t(self.overlay_warning))
-        elif self.last_error_message is not None:
+        if self.last_error_message is not None:
             self.error(self.last_error_message)
+        elif self.overlay_warning is not None:
+            self.status.setText(self.t(self.overlay_warning))
         elif not self.last_update:
             self.status.setText(self.t('Connecting to Codex…' if self.provider == 'codex' else 'Waiting for Claude Code…'))
         else:
