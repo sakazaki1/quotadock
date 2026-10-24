@@ -18,6 +18,9 @@ class QuotaWindow:
 class QuotaSource(Protocol):
     """A source emits server/file supplied values and owns its freshness policy."""
     stale_after: int | None
+    provider: str        # stable id: 'codex', 'claude'
+    provider_label: str  # name shown to people
+    source_id: str       # label stored in the local history
 
     def start(self) -> None: ...
     def refresh(self) -> None: ...

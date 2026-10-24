@@ -164,21 +164,42 @@ QuotaDock is an independent community project and is not affiliated with or endo
 
 **Disable login startup:** open your desktop's Autostart settings and disable QuotaDock, or reinstall using `--no-autostart`.
 
-## Update or uninstall
+## Update
 
 To update, quit QuotaDock from its tray menu, download the new version, run `sh install.sh` again, then reopen it from the menu. Reuse `--no-autostart` if you want startup disabled.
 
 Tagged versions publish standalone Linux and Windows packages in [GitHub Releases](https://github.com/sakazaki1/quotadock/releases). A Python package definition is also included, so developers can install a checkout in an isolated environment with `pipx install .`.
 
-## Optional Claude Code source
+## Claude Code usage — optional, can run next to Codex
 
-QuotaDock can display a **local Claude Code status-line mirror** without browser cookies, tokens, or unofficial web endpoints. Configure Claude Code (or a trusted status-line helper) to write a JSON file with `five_hour` and `seven_day` entries, then launch:
+QuotaDock can show your Claude plan usage (the 5-hour and 7-day windows) without browser cookies, tokens or unofficial web endpoints. Claude Code hands these numbers only to its status-line command, so a small standard-library helper mirrors them into a local file that QuotaDock reads.
 
-```sh
-quotadock --source claude-file --claude-state ~/.claude/statusline-state.json
-```
+1. Point Claude Code at the helper in `~/.claude/settings.json` (after `pipx install .` the command is `quotadock-claude-mirror`):
 
-The file is read locally every 15 seconds. QuotaDock never treats a missing field as available quota, and it does not mark a valid Claude file stale merely because Claude Code is closed; its values remain meaningful until their provider-reported reset time.
+   ```json
+   { "statusLine": { "type": "command", "command": "python3 ~/.local/share/quotadock/claude_statusline_mirror.py" } }
+   ```
+
+   Already have a status line? Keep it by chaining it: add `--then '~/.claude/my-statusline.sh'` to the command. It receives the same input and its output is what Claude Code displays.
+2. Launch Claude alone, or Codex and Claude together:
+
+   ```sh
+   quotadock --source claude-file                       # file defaults to ~/.claude/statusline-state.json
+   quotadock --source both                              # one process, one window and tray icon per provider
+   quotadock --source both --claude-state /other/state.json
+   ```
+
+   `sh install.sh --with-claude` makes the application-menu and login shortcuts start both.
+
+What to expect:
+
+- Each provider has its own window, tray icon (Claude's has an orange stripe), position, theme and alerts. Only the interface language is shared.
+- The numbers refresh when Claude Code renders its status line, so they are as recent as your last Claude Code activity. They exist only for subscription plans and appear after the first response of a session; API-key accounts have none.
+- A window whose reset time has passed is shown as `—`, never as its old value and never as an assumed 0%.
+- Anchoring the overlay to an application window is Codex-only. The Claude window is a regular floating window.
+- QuotaDock only sees what Claude Code reports. There is no supported local source for the Claude web or desktop apps.
+
+## Uninstall
 
 To uninstall, quit QuotaDock and run:
 

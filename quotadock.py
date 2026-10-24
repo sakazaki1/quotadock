@@ -25,6 +25,31 @@ from i18n import translate
 VERSION = '1.1.0'
 
 
+class ProviderSettings:
+    """QSettings view for one quota provider.
+
+    Codex keeps the historical flat keys, so existing installs keep their layout. Other providers get
+    their own ``<provider>/`` namespace, which lets several windows run in one process without sharing
+    position, theme or alert choices. Only the interface language is shared.
+    """
+    SHARED = frozenset({'language'})
+
+    def __init__(self, provider):
+        self.provider = provider
+        self._settings = QSettings('QuotaDock', 'QuotaDock')
+
+    def _key(self, key):
+        return key if self.provider == 'codex' or key in self.SHARED else f'{self.provider}/{key}'
+
+    def value(self, key, default=None, type=None):
+        if type is None:
+            return self._settings.value(self._key(key), default)
+        return self._settings.value(self._key(key), default, type=type)
+
+    def setValue(self, key, value):
+        self._settings.setValue(self._key(key), value)
+
+
 def trusted_executable(path):
     """Return an executable only when it is safe to run as the current user."""
     try:
@@ -84,6 +109,9 @@ class QuotaClient(QObject):
     failed = Signal(str)
     resolved = Signal(str)
     MAX_MESSAGE_BYTES = 1024 * 1024
+    provider = 'codex'
+    provider_label = 'Codex'
+    source_id = 'codex'
 
     def __init__(self, binary_resolver=executable, process_arguments=None):
         super().__init__()
@@ -395,9 +423,17 @@ class Handle(QLabel):
 
 
 class Bar(QWidget):
+    language_changed = Signal(str)
+
     def __init__(self, client: QuotaSource | None = None):
         super().__init__()
-        self.settings = QSettings('QuotaDock', 'QuotaDock')
+        self.client = client or QuotaClient()
+        self.provider = getattr(self.client, 'provider', 'codex')
+        self.provider_label = getattr(self.client, 'provider_label', 'Codex')
+        self.brand = 'QuotaDock' if self.provider == 'codex' else f'QuotaDock · {self.provider_label}'
+        self.accent = '#7fe7b2' if self.provider == 'codex' else '#d97757'
+        self.strip_accent = '#58efad' if self.provider == 'codex' else '#d97757'
+        self.settings = ProviderSettings(self.provider)
         self.language = self.settings.value('language', 'en')
         if self.language not in ('en', 'pt'):
             self.language = 'en'
@@ -408,7 +444,6 @@ class Bar(QWidget):
         self.last_update = 0
         self.bucket = None
         self.is_failed = True
-        self.client = client or QuotaClient()
         self.client.updated.connect(self.update_quota)
         self.client.failed.connect(self.error)
         self.setWindowTitle('QuotaDock — Codex usage monitor')
@@ -418,7 +453,7 @@ class Bar(QWidget):
         self.theme = self.settings.value('theme', 'solid')
         self.panels = self.settings.value('panels', 'both')
         self.display_mode = self.settings.value('displayMode', 'compact_bar')
-        self.app_only = self.settings.value('appOnly', True, type=bool)
+        self.app_only = self.provider == 'codex' and self.settings.value('appOnly', True, type=bool)
         self.app_offset_right = self.settings.value('appOffsetRight', 12, type=int)
         self.app_offset_top = self.settings.value('appOffsetTop', 72, type=int)
         self.host_rect = QRect()
@@ -453,7 +488,7 @@ class Bar(QWidget):
         layout.setContentsMargins(11, 8, 11, 8)
         layout.setSpacing(5)
         header = QHBoxLayout()
-        title = Handle('⠿ QuotaDock')
+        title = Handle(f'⠿ {self.brand}')
         self.title_label = title
         title.setObjectName('title')
         title.setToolTip('Drag to position over your app')
@@ -482,6 +517,10 @@ class Bar(QWidget):
         self.compact_percentage = QLabel('—')
         self.compact_percentage.setObjectName('compactPercentage')
         self.compact_percentage.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        self.compact_tag = QLabel(self.provider_label)
+        self.compact_tag.setStyleSheet(f'color: {self.accent}; font-size: 11px; font-weight: bold;')
+        self.compact_tag.setVisible(self.provider != 'codex')
+        compact_layout.addWidget(self.compact_tag)
         compact_layout.addWidget(self.compact_progress, 1)
         compact_layout.addWidget(self.compact_percentage)
         layout.addWidget(self.compact_widget)
@@ -490,7 +529,7 @@ class Bar(QWidget):
         strip_layout = QHBoxLayout(self.dashboard_strip)
         strip_layout.setContentsMargins(3, 2, 3, 2)
         strip_layout.setSpacing(10)
-        self.strip_brand = QLabel("<span style='color:#58efad'>▂▅▇</span>  QuotaDock")
+        self.strip_brand = QLabel(f"<span style='color:{self.strip_accent}'>▂▅▇</span>  {self.brand}")
         self.strip_brand.setObjectName('stripBrand')
         strip_layout.addWidget(self.strip_brand)
         self.strip_segments = []
@@ -551,7 +590,7 @@ class Bar(QWidget):
             self.panel_widgets.append(panel)
             self.rows.append((name, value, progress))
         layout.addWidget(self.body)
-        self.status = QLabel('Connecting to Codex…')
+        self.status = QLabel('Connecting to Codex…' if self.provider == 'codex' else 'Waiting for Claude Code…')
         self.status.setObjectName('status')
         self.status.setWordWrap(True)
         layout.addWidget(self.status)
@@ -578,6 +617,7 @@ class Bar(QWidget):
         app_only_action = self.menu.addAction('Show only over ChatGPT/Codex')
         app_only_action.setCheckable(True)
         app_only_action.setChecked(self.app_only)
+        app_only_action.setVisible(self.provider == 'codex')
         app_only_action.toggled.connect(self.set_app_only)
         refresh = self.menu.addAction('Refresh now')
         refresh.triggered.connect(self.client.refresh)
@@ -604,9 +644,11 @@ class Bar(QWidget):
         language_menu = self.menu.addMenu('Language')
         self.language_actions = self.choices(language_menu, [('en', 'English'), ('pt', 'Português')], self.language, self.set_language)
         self.menu.addSeparator()
-        self.menu.addAction('Copy Codex executable path').triggered.connect(
+        copy_path = self.menu.addAction('Copy Codex executable path')
+        copy_path.triggered.connect(
             lambda: QApplication.clipboard().setText(executable() or self.t('Codex executable not found'))
         )
+        copy_path.setVisible(self.provider == 'codex')
         self.menu.addAction('QuotaDock on GitHub').triggered.connect(
             lambda: QDesktopServices.openUrl(QUrl('https://github.com/sakazaki1/quotadock'))
         )
@@ -621,7 +663,7 @@ class Bar(QWidget):
         self.strip_options.setMenu(self.menu)
         for button, submenu in zip(self.footer_buttons, (theme_menu, opacity_menu, display_menu)):
             button.setMenu(submenu)
-        for widget in (self.compact_widget, self.compact_progress, self.compact_percentage,
+        for widget in (self.compact_widget, self.compact_tag, self.compact_progress, self.compact_percentage,
                        self.dashboard_strip, self.strip_brand,
                        *(part for segment in self.strip_segments for part in segment)):
             widget.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
@@ -634,7 +676,7 @@ class Bar(QWidget):
         painter.fillRect(5, 13, 22, 7, QColor('#7fe7b2'))
         painter.end()
         self.tray = QSystemTrayIcon(QIcon(pixmap), self)
-        self.tray.setToolTip('Real Codex quota')
+        self.tray.setToolTip(self.t('Real Codex quota'))
         self.tray.setContextMenu(self.menu)
         self.tray.activated.connect(self.tray_activated)
         if QSystemTrayIcon.isSystemTrayAvailable():
@@ -687,7 +729,8 @@ class Bar(QWidget):
         self.settings.setValue('trustedExecutableIdentity', identity or '')
 
     def t(self, text):
-        return translate(text, self.language)
+        translated = translate(text, self.language)
+        return translated if self.provider_label == 'Codex' else translated.replace('Codex', self.provider_label)
 
     def collect_menu_texts(self, menu):
         for action in menu.actions():
@@ -699,6 +742,17 @@ class Bar(QWidget):
     def set_language(self, language):
         self.language = language
         self.settings.setValue('language', language)
+        self.retranslate_ui()
+        self.language_changed.emit(language)
+
+    def follow_language(self, language):
+        """Adopt a language chosen in another QuotaDock window without announcing it again."""
+        if language == self.language:
+            return
+        self.language = language
+        action = self.language_actions.get(language)
+        if action is not None:
+            action.setChecked(True)
         self.retranslate_ui()
 
     def retranslate_ui(self):
@@ -722,7 +776,7 @@ class Bar(QWidget):
         elif self.last_error_message is not None:
             self.error(self.last_error_message)
         elif not self.last_update:
-            self.status.setText(self.t('Connecting to Codex…'))
+            self.status.setText(self.t('Connecting to Codex…' if self.provider == 'codex' else 'Waiting for Claude Code…'))
         else:
             self.tick()
 
@@ -761,7 +815,7 @@ class Bar(QWidget):
             background = f'rgba(32, 40, 36, {self.transparency})' if self.theme == 'translucent' else '#202824'
             self.setStyleSheet(self.style_template.replace('CARD_BACKGROUND', background))
         if hasattr(self, 'card_layout'):
-            self.title_label.setText("<span style='color:#58efad'>▂▅▇</span>  QuotaDock" if self.theme == 'dashboard' else '⠿ QuotaDock')
+            self.title_label.setText(f"<span style='color:{self.strip_accent}'>▂▅▇</span>  {self.brand}" if self.theme == 'dashboard' else f'⠿ {self.brand}')
             self.update_responsive_layout()
 
     def set_theme(self, theme):
@@ -1005,7 +1059,7 @@ class Bar(QWidget):
             self.card_layout.setContentsMargins(margin, max(5, round(8 * scale)), margin, max(5, round(8 * scale)))
             strip_layout = self.dashboard_strip.layout()
             strip_layout.setSpacing(max(5, round(10 * scale)))
-            self.strip_brand.setText("<span style='color:#58efad'>▂▅▇</span>" if width < 380 else "<span style='color:#58efad'>▂▅▇</span>  QuotaDock")
+            self.strip_brand.setText(f"<span style='color:{self.strip_accent}'>▂▅▇</span>" if width < 380 else f"<span style='color:{self.strip_accent}'>▂▅▇</span>  {self.brand}")
             self.strip_brand.setStyleSheet(f'font-size: {pixels(15)}px; font-weight: bold;')
             for _, caption, meter in self.strip_segments:
                 caption.setStyleSheet(f'font-size: {pixels(12)}px;')
@@ -1058,7 +1112,8 @@ class Bar(QWidget):
 
     def center(self):
         rect = QApplication.primaryScreen().availableGeometry()
-        self.move(rect.right() - self.width() - 25, rect.top() + 80)
+        slot = 0 if self.provider == 'codex' else 1
+        self.move(rect.right() - (self.width() + 12) * (slot + 1) - 13, rect.top() + 80)
 
     def set_minimal(self, enabled):
         self.minimal = enabled
@@ -1109,6 +1164,8 @@ class Bar(QWidget):
         painter.setPen(Qt.PenStyle.NoPen)
         painter.setBrush(QColor('#202824'))
         painter.drawRoundedRect(0, 0, 64, 64, 10, 10)
+        if self.provider != 'codex':
+            painter.fillRect(7, 3, 50, 3, QColor(self.accent))
         painter.setPen(QColor('#ffffff' if not self.is_failed else '#aab3ad'))
         painter.setFont(QFont('Noto Sans', 23, QFont.Weight.Bold))
         painter.drawText(0, 0, 64, 44, Qt.AlignmentFlag.AlignCenter, f'{amount:.0f}' if amount is not None and not self.is_failed else '?')
@@ -1121,6 +1178,8 @@ class Bar(QWidget):
         painter.end()
         self.tray.setIcon(QIcon(pixmap))
         tips = [self.t('QuotaDock • remaining' if not self.is_failed else 'QuotaDock • offline')]
+        if self.provider != 'codex':
+            tips[0] += f' ({self.provider_label})'
         for index in selected:
             window = windows[index]
             value = remaining(window)
@@ -1131,12 +1190,14 @@ class Bar(QWidget):
 
     def update_quota(self, bucket):
         self.bucket = bucket
-        self.last_update = time.monotonic()
+        observed = bucket.get('observedAt')
+        age = max(0.0, time.time() - observed) if isinstance(observed, (int, float)) and not isinstance(observed, bool) else 0.0
+        self.last_update = time.monotonic() - age
         self.is_failed = False
         self.last_error_message = None
         self.notify_thresholds(bucket)
         if self.history_enabled:
-            self.history().record('claude-file' if self.client.__class__.__name__ == 'ClaudeFileClient' else 'codex', bucket)
+            self.history().record(getattr(self.client, 'source_id', 'codex'), bucket)
         self.paint_quota()
         self.tick()
 
@@ -1158,9 +1219,9 @@ class Bar(QWidget):
             reset = bucket.get(name, {}).get('resetsAt') if isinstance(bucket.get(name), dict) else None
             for threshold, key in ((20, 'alert20'), (10, 'alert10')):
                 if self.settings.value(key, True, type=bool) and amount is not None and (previous is None or previous > threshold) and amount <= threshold:
-                    self.tray.showMessage('QuotaDock', self.t('Quota alert: {amount}% remaining').format(amount=f'{amount:g}'))
+                    self.tray.showMessage(self.brand, self.t('Quota alert: {amount}% remaining').format(amount=f'{amount:g}'))
             if self.settings.value('alertReset', True, type=bool) and self.last_resets[index] and isinstance(reset, (int, float)) and reset > self.last_resets[index]:
-                self.tray.showMessage('QuotaDock', self.t('Quota reset detected.'))
+                self.tray.showMessage(self.brand, self.t('Quota reset detected.'))
             self.last_remaining[index] = amount
             self.last_resets[index] = reset if isinstance(reset, (int, float)) else self.last_resets[index]
 
@@ -1250,8 +1311,9 @@ class Bar(QWidget):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--smoke-test', action='store_true')
-    parser.add_argument('--source', choices=('codex', 'claude-file'), default='codex',
-                        help='Quota source. Claude reads only the local mirror file you specify.')
+    parser.add_argument('--source', action='append', choices=('codex', 'claude-file', 'both'),
+                        help='Quota source (default: codex). Repeat the option, or use "both", to show Codex and '
+                             'Claude together. Claude reads only the local mirror file you specify.')
     parser.add_argument('--claude-state', default='~/.claude/statusline-state.json',
                         help='Path to a Claude Code status-line mirror JSON file.')
     args = parser.parse_args()
@@ -1268,27 +1330,43 @@ def main():
     lock = QLockFile(str(runtime / 'quotadock.lock'))
     if not lock.tryLock(100):
         return 0
-    if args.source == 'claude-file':
-        from claude_source import ClaudeFileClient
-        client = ClaudeFileClient(args.claude_state)
-    else:
-        client = QuotaClient()
-    bar = Bar(client)
-    app.aboutToQuit.connect(bar.cleanup)
-    if not bar.app_only:
-        bar.show()
-        QTimer.singleShot(0, bar.hide_from_taskbar)
+    names = []
+    for choice in args.source or ['codex']:
+        for name in (('codex', 'claude-file') if choice == 'both' else (choice,)):
+            if name not in names:
+                names.append(name)
+    bars = []
+    for name in names:
+        if name == 'claude-file':
+            from claude_source import ClaudeFileClient
+            client = ClaudeFileClient(args.claude_state)
+        else:
+            client = QuotaClient()
+        bar = Bar(client)
+        app.aboutToQuit.connect(bar.cleanup)
+        bars.append(bar)
+    for bar in bars:
+        for other in bars:
+            if other is not bar:
+                bar.language_changed.connect(other.follow_language)
+        if not bar.app_only:
+            bar.show()
+            QTimer.singleShot(0, bar.hide_from_taskbar)
     if args.smoke_test:
-        bar.update_quota({'primary': {'usedPercent': 6, 'windowDurationMins': 300}, 'secondary': {'usedPercent': 1, 'windowDurationMins': 10080}})
-        assert bar.rows[0][1].text() == '94%'
-        assert bar.rows[1][1].text() == '99%'
-        bar.error('Offline test')
-        assert bar.is_failed
+        for bar in bars:
+            bar.update_quota({'primary': {'usedPercent': 6, 'windowDurationMins': 300}, 'secondary': {'usedPercent': 1, 'windowDurationMins': 10080}})
+            assert bar.rows[0][1].text() == '94%'
+            assert bar.rows[1][1].text() == '99%'
+            bar.error('Offline test')
+            assert bar.is_failed
         app.processEvents()
-        bar.grab().save(str(Path(tempfile.gettempdir()) / 'quotadock-preview.png'))
+        for bar in bars:
+            suffix = '' if bar.provider == 'codex' else f'-{bar.provider}'
+            bar.grab().save(str(Path(tempfile.gettempdir()) / f'quotadock-preview{suffix}.png'))
         QTimer.singleShot(100, app.quit)
     else:
-        QTimer.singleShot(0, bar.client.start)
+        for bar in bars:
+            QTimer.singleShot(0, bar.client.start)
     return app.exec()
 
 

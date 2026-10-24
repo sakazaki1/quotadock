@@ -29,6 +29,7 @@ def atomic_write(path, content):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--no-autostart', action='store_true', help='Do not start QuotaDock at login')
+    parser.add_argument('--with-claude', action='store_true', help='Launch showing Codex and Claude together (--source both)')
     args = parser.parse_args()
     if importlib.util.find_spec('PySide6') is None:
         parser.exit(1, 'PySide6 is missing. On Ubuntu/Kubuntu: sudo apt install python3-pyside6.qtwidgets\n')
@@ -39,14 +40,14 @@ def main():
         parser.error('XDG_DATA_HOME and XDG_CONFIG_HOME must be absolute paths.')
     target = data / 'quotadock'
     target.mkdir(parents=True, exist_ok=True)
-    for name in ('quotadock.py', 'limits.py', 'i18n.py', 'quota_core.py', 'claude_source.py', 'launch.sh', 'README.md', 'LICENSE', 'uninstall.py', 'quotadock.svg'):
+    for name in ('quotadock.py', 'limits.py', 'i18n.py', 'quota_core.py', 'history.py', 'claude_source.py', 'claude_statusline_mirror.py', 'launch.sh', 'README.md', 'LICENSE', 'uninstall.py', 'quotadock.svg'):
         if (source / name).resolve() != (target / name).resolve():
             shutil.copy2(source / name, target / name)
     (target / 'launch.sh').chmod(0o755)
     desktop = '\n'.join([
         '[Desktop Entry]', 'Type=Application', 'Name=QuotaDock',
         'Comment=Live Codex quota in a floating window and system tray',
-        'Exec=' + desktop_quote(target / 'launch.sh'),
+        'Exec=' + desktop_quote(target / 'launch.sh') + (' --source both' if args.with_claude else ''),
         'Icon=' + desktop_quote(target / 'quotadock.svg'), 'Terminal=false', 'Categories=Utility;',
         'StartupNotify=false', 'X-KDE-autostart-after=panel', '',
     ])

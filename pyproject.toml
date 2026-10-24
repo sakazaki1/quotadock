@@ -13,6 +13,7 @@ dependencies = ["PySide6>=6.5,<7"]
 
 [project.scripts]
 quotadock = "quotadock:main"
+quotadock-claude-mirror = "claude_statusline_mirror:main"
 
 [tool.setuptools]
-py-modules = ["quotadock", "limits", "i18n", "quota_core", "claude_source", "history", "windows_watcher"]
+py-modules = ["quotadock", "limits", "i18n", "quota_core", "claude_source", "claude_statusline_mirror", "history", "windows_watcher"]
