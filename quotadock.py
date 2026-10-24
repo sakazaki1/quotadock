@@ -489,6 +489,7 @@ class Bar(QWidget):
                 self.reset_label.setStyleSheet('color: #b7c8bd; font-size: 11px;')
                 self.reset_label.setWordWrap(True)
                 panel_layout.addWidget(self.reset_label)
+            panel_layout.addStretch(1)
             body_layout.addWidget(panel, 1)
             self.panel_widgets.append(panel)
             self.rows.append((name, value, progress))
@@ -667,13 +668,8 @@ class Bar(QWidget):
             background = f'rgba(32, 40, 36, {self.transparency})' if self.theme == 'translucent' else '#202824'
             self.setStyleSheet(self.style_template.replace('CARD_BACKGROUND', background))
         if hasattr(self, 'card_layout'):
-            self.card_layout.setContentsMargins(*(16, 12, 16, 12) if self.theme == 'dashboard' else (11, 8, 11, 8))
-            self.card_layout.setSpacing(9 if self.theme == 'dashboard' else 5)
-            for panel_layout in self.panel_layouts:
-                panel_layout.setContentsMargins(*(12, 10, 12, 10) if self.theme == 'dashboard' else (0, 0, 0, 0))
-                panel_layout.setSpacing(7 if self.theme == 'dashboard' else 3)
             self.title_label.setText("<span style='color:#58efad'>▂▅▇</span>  QuotaDock" if self.theme == 'dashboard' else '⠿ QuotaDock')
-            self.dashboard_footer.setVisible(self.theme == 'dashboard' and self.display_mode == 'standard')
+            self.update_responsive_layout()
 
     def set_theme(self, theme):
         self.theme = theme
@@ -694,11 +690,13 @@ class Bar(QWidget):
         if save:
             self.settings.setValue('panels', panels)
         if self.display_mode == 'standard':
-            self.setMinimumHeight((140 if panels == 'both' else 100) if self.minimal else (190 if panels == 'both' else 145))
+            minimum_height = 220 if self.theme == 'dashboard' else (190 if panels == 'both' else 145)
+            self.setMinimumHeight(minimum_height)
         for index, (segment, _, _) in enumerate(self.strip_segments):
             segment.setVisible(panels == 'both' or panels == ('primary', 'secondary')[index])
         if self.display_mode == 'dashboard_strip':
             self.setMinimumWidth(300 if panels == 'both' else 225)
+        self.update_responsive_layout()
         if hasattr(self, 'tray'):
             self.update_tray()
 
@@ -725,8 +723,10 @@ class Bar(QWidget):
             self.setMinimumSize(300 if self.panels == 'both' else 225, 58)
             self.resize(self.settings.value('stripWidth', 440, type=int), self.settings.value('stripHeight', 68, type=int))
         else:
-            self.setMinimumSize(340 if self.theme == 'dashboard' else 210, 220 if self.theme == 'dashboard' else 115)
+            self.setMinimumSize(340 if self.theme == 'dashboard' else 210,
+                                220 if self.theme == 'dashboard' else (190 if self.panels == 'both' else 145))
             self.resize(self.settings.value('fullWidth', 420 if self.theme == 'dashboard' else 310, type=int), self.settings.value('fullHeight', 300 if self.theme == 'dashboard' else 230, type=int))
+        self.update_responsive_layout()
         self.paint_quota()
 
     def set_app_only(self, enabled):
@@ -881,13 +881,7 @@ class Bar(QWidget):
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
-        # The layouts reflow with the window; scale text on wider panels as well.
-        scale = min(1.7, max(0.85, self.width() / 310))
-        if hasattr(self, 'rows'):
-            for label, value, progress in self.rows:
-                label.setStyleSheet(f'font-size: {round(12 * scale)}px;')
-                value.setStyleSheet(f'font-size: {round(18 * scale)}px; font-weight: bold;')
-                progress.setMinimumHeight(round(7 * scale))
+        self.update_responsive_layout()
         if hasattr(self, 'settings') and self.isVisible():
             if self.app_only and not self._placing:
                 prefix = 'compact' if self.display_mode == 'compact_bar' else 'strip' if self.display_mode == 'dashboard_strip' else 'full'
@@ -895,6 +889,69 @@ class Bar(QWidget):
                 self.settings.setValue(f'{prefix}Height', self.height())
             elif not self.app_only:
                 self.settings.setValue('geometry', self.saveGeometry())
+
+    def update_responsive_layout(self):
+        if not hasattr(self, 'card_layout'):
+            return
+        width, height = self.width(), self.height()
+        dashboard = self.theme == 'dashboard'
+        if self.display_mode == 'dashboard_strip':
+            scale = max(0.82, min(1.42, width / 440, height / 68))
+        elif self.display_mode == 'compact_bar':
+            scale = max(0.8, min(1.35, width / 152, height / 42))
+        else:
+            reference_width, reference_height = (420, 300) if dashboard else (310, 230)
+            scale = max(0.85 if dashboard else 0.76,
+                        min(1.45, width / reference_width, height / reference_height))
+
+        def pixels(base):
+            return max(8, round(base * scale))
+
+        if self.display_mode == 'dashboard_strip':
+            margin = max(7, round(12 * scale))
+            self.card_layout.setContentsMargins(margin, max(5, round(8 * scale)), margin, max(5, round(8 * scale)))
+            strip_layout = self.dashboard_strip.layout()
+            strip_layout.setSpacing(max(5, round(10 * scale)))
+            self.strip_brand.setText("<span style='color:#58efad'>▂▅▇</span>" if width < 380 else "<span style='color:#58efad'>▂▅▇</span>  QuotaDock")
+            self.strip_brand.setStyleSheet(f'font-size: {pixels(15)}px; font-weight: bold;')
+            for _, caption, meter in self.strip_segments:
+                caption.setStyleSheet(f'font-size: {pixels(12)}px;')
+                meter.setFixedHeight(max(7, round(11 * scale)))
+            self.strip_options.setStyleSheet(f'font-size: {pixels(12)}px; padding: {max(2, round(4 * scale))}px;')
+            return
+
+        if self.display_mode == 'compact_bar':
+            margin = max(5, round(8 * scale))
+            self.card_layout.setContentsMargins(margin, max(3, round(5 * scale)), margin, max(3, round(5 * scale)))
+            self.compact_percentage.setStyleSheet(f'font-size: {pixels(12)}px;')
+            self.compact_progress.setFixedHeight(max(6, round(9 * scale)))
+            return
+
+        tight = dashboard and (width < 390 or height < 270)
+        horizontal = round((12 if tight else 16) * scale) if dashboard else round(11 * scale)
+        vertical = round((8 if tight else 12) * scale) if dashboard else round(8 * scale)
+        self.card_layout.setContentsMargins(max(7, horizontal), max(6, vertical), max(7, horizontal), max(6, vertical))
+        self.card_layout.setSpacing(max(3, round((5 if tight else 9) * scale)) if dashboard else max(3, round(5 * scale)))
+        for panel_layout in self.panel_layouts:
+            inset = max(6, round((7 if tight else 12) * scale)) if dashboard else 0
+            panel_layout.setContentsMargins(inset, max(4, round((6 if tight else 10) * scale)) if dashboard else 0,
+                                            inset, max(4, round((6 if tight else 10) * scale)) if dashboard else 0)
+            panel_layout.setSpacing(max(2, round((4 if tight else 7) * scale)) if dashboard else max(2, round(3 * scale)))
+        self.title_label.setStyleSheet(f'font-size: {pixels(15 if dashboard else 13)}px; font-weight: bold;')
+        for button in (self.compact, self.menu_button):
+            button.setStyleSheet(f'font-size: {pixels(12)}px; padding: {max(2, round(4 * scale))}px {max(4, round(7 * scale))}px;')
+        for panel, (label, value, progress) in zip(self.panel_widgets, self.rows):
+            emblem = panel.findChild(QLabel, 'panelEmblem')
+            emblem.setStyleSheet(f'color: #69e9b3; font-size: {pixels(17)}px;')
+            label.setStyleSheet(f'font-size: {pixels(12)}px;')
+            value.setStyleSheet(f'font-size: {pixels(18)}px; font-weight: bold;')
+            progress.setFixedHeight(max(6, round((11 if dashboard else 7) * scale)))
+        self.reset_label.setStyleSheet(f'color: #b7c8bd; font-size: {pixels(11)}px;')
+        self.status.setStyleSheet(f'color: #9fcbb7; font-size: {pixels(11)}px;')
+        self.status.setVisible(not self.minimal and (not dashboard or height >= 245) or self.is_failed and height >= 245)
+        self.dashboard_footer.setVisible(dashboard and width >= 390 and height >= 270)
+        for button in self.footer_buttons:
+            button.setStyleSheet(f'font-size: {pixels(11)}px; padding: {max(2, round(4 * scale))}px;')
 
     def moveEvent(self, event):
         super().moveEvent(event)
@@ -920,7 +977,8 @@ class Bar(QWidget):
         self.paint_quota()
 
     def apply_minimal(self):
-        self.status.setVisible(self.display_mode == 'standard' and (not self.minimal or self.is_failed))
+        self.status.setVisible(self.display_mode == 'standard' and (not self.minimal or self.is_failed)
+                               and (self.theme != 'dashboard' or self.height() >= 245))
 
     def minimize_to_tray(self):
         if QSystemTrayIcon.isSystemTrayAvailable():
