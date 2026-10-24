@@ -31,6 +31,17 @@ class LanguageTests(unittest.TestCase):
             bar.set_language('en')
             self.assertEqual(bar.minimal_action.text(), 'Minimal interface')
             self.assertIn('Reconnecting', bar.status.text())
+            bar.set_theme('dashboard')
+            self.assertEqual(bar.display_mode, 'dashboard_strip')
+            bar.update_quota({'primary': {'usedPercent': 17, 'windowDurationMins': 300},
+                              'secondary': {'usedPercent': 4, 'windowDurationMins': 10080}})
+            self.assertEqual(bar.strip_segments[0][1].text(), '5h  83%')
+            self.assertEqual(bar.strip_segments[1][1].text(), 'Week  96%')
+            bar.set_language('pt')
+            self.assertEqual(bar.strip_segments[1][1].text(), 'Semana  96%')
+            bar.set_display_mode('standard')
+            self.assertFalse(bar.dashboard_footer.isHidden())
+            self.assertEqual(bar.footer_buttons[0].text(), 'Tema')
             bar.cleanup()
 
 

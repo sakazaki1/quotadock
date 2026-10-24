@@ -6,6 +6,14 @@ QuotaDock is a lightweight desktop companion for Linux and Windows that shows yo
 
 It reads server-reported percentages from the local Codex app server. It does not count messages or estimate token consumption.
 
+### Dashboard preview
+
+The screenshots use demo percentages for illustration; normal operation always displays server-reported quota.
+
+![Dashboard window](docs/dashboard-full.png)
+
+![Compact dashboard strip](docs/dashboard-strip.png)
+
 ## Features
 
 - **Real remaining quota:** percentages from 100% down to 0% for your short-term and weekly windows.
@@ -17,6 +25,7 @@ It reads server-reported percentages from the local Codex app server. It does no
 - **QuotaDock app icon:** a custom quota-meter icon appears in the application menu. The floating window is hidden from the taskbar by default while the system tray keeps its live usage indicator.
 - **Choose your panels:** hours only, weekly only, or both.
 - **Solid or translucent theme:** three background opacity levels, with readable opaque text.
+- **Dashboard theme:** dark bordered quota cards, mint progress bars and a compact strip with both quota windows, inspired by a desktop dashboard layout.
 - **Move and resize:** drag the title to move and the edges or corners to resize.
 - **Saved preferences:** position, dimensions, theme and visible panels persist between sessions.
 - **Language:** English by default; switch to Portuguese in the settings menu without restarting.
@@ -110,6 +119,8 @@ To use this override from the application menu as well, configure the environmen
 | **Copy Codex executable path** | Copy the resolved local Codex path for troubleshooting |
 | **Visible panels** | Select hours, weekly, or both |
 | **Theme** | Choose solid or translucent; adjust background opacity |
+| **Theme → Dashboard** | Use the redesigned dark cards; in compact mode this opens the two-window dashboard strip |
+| **Display style → Dashboard strip** | Show hours and weekly usage together in a movable, resizable strip |
 | **Language** | Switch between English and Português; the choice is saved |
 | **Refresh now** | Request an immediate reading |
 | **Quit** | Stop QuotaDock and its helper process |

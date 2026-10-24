@@ -392,10 +392,12 @@ class Bar(QWidget):
         card.setObjectName('card')
         outer.addWidget(card)
         layout = QVBoxLayout(card)
+        self.card_layout = layout
         layout.setContentsMargins(11, 8, 11, 8)
         layout.setSpacing(5)
         header = QHBoxLayout()
         title = Handle('⠿ QuotaDock')
+        self.title_label = title
         title.setObjectName('title')
         title.setToolTip('Drag to position over your app')
         title.setCursor(Qt.CursorShape.SizeAllCursor)
@@ -427,19 +429,51 @@ class Bar(QWidget):
         compact_layout.addWidget(self.compact_percentage)
         layout.addWidget(self.compact_widget)
         self.compact_widget.hide()
+        self.dashboard_strip = QWidget()
+        strip_layout = QHBoxLayout(self.dashboard_strip)
+        strip_layout.setContentsMargins(3, 2, 3, 2)
+        strip_layout.setSpacing(10)
+        self.strip_brand = QLabel("<span style='color:#58efad'>▂▅▇</span>  QuotaDock")
+        self.strip_brand.setObjectName('stripBrand')
+        strip_layout.addWidget(self.strip_brand)
+        self.strip_segments = []
+        for index in range(2):
+            segment = QWidget()
+            segment_layout = QVBoxLayout(segment)
+            segment_layout.setContentsMargins(0, 0, 0, 0)
+            segment_layout.setSpacing(3)
+            caption = QLabel('—')
+            meter = QProgressBar()
+            meter.setRange(0, 1000)
+            meter.setTextVisible(False)
+            segment_layout.addWidget(caption)
+            segment_layout.addWidget(meter)
+            strip_layout.addWidget(segment, 1)
+            self.strip_segments.append((segment, caption, meter))
+        self.strip_options = QPushButton('⚙')
+        self.strip_options.setObjectName('stripOptions')
+        strip_layout.addWidget(self.strip_options)
+        layout.addWidget(self.dashboard_strip)
+        self.dashboard_strip.hide()
         self.body = QWidget()
         body_layout = QVBoxLayout(self.body)
         body_layout.setContentsMargins(0, 0, 0, 0)
         self.rows = []
         self.panel_widgets = []
+        self.panel_layouts = []
         for fallback in ('Window', 'Week'):
-            panel = QWidget()
+            panel = QFrame()
+            panel.setObjectName('quotaPanel')
             panel_layout = QVBoxLayout(panel)
             panel_layout.setContentsMargins(0, 0, 0, 0)
             panel_layout.setSpacing(3)
+            self.panel_layouts.append(panel_layout)
             row = QHBoxLayout()
             name, value = QLabel(fallback), QLabel('—')
             value.setObjectName('percentage')
+            emblem = QLabel('◷' if fallback == 'Window' else '▣')
+            emblem.setObjectName('panelEmblem')
+            row.addWidget(emblem)
             row.addWidget(name)
             row.addStretch()
             row.addWidget(value)
@@ -463,6 +497,18 @@ class Bar(QWidget):
         self.status.setObjectName('status')
         self.status.setWordWrap(True)
         layout.addWidget(self.status)
+        self.dashboard_footer = QWidget()
+        footer_layout = QHBoxLayout(self.dashboard_footer)
+        footer_layout.setContentsMargins(0, 0, 0, 0)
+        footer_layout.setSpacing(7)
+        self.footer_buttons = []
+        for caption in ('Theme', 'Background opacity', 'Display style'):
+            button = QPushButton(caption)
+            button.setObjectName('footerButton')
+            footer_layout.addWidget(button, 1)
+            self.footer_buttons.append(button)
+        layout.addWidget(self.dashboard_footer)
+        self.dashboard_footer.hide()
         self.menu = QMenu(self)
         self.menu.addAction('Show / hide QuotaDock').triggered.connect(self.toggle_window)
         self.minimal_action = self.menu.addAction('Minimal interface')
@@ -470,7 +516,7 @@ class Bar(QWidget):
         self.minimal_action.setChecked(self.minimal)
         self.minimal_action.toggled.connect(self.set_minimal)
         display_menu = self.menu.addMenu('Display style')
-        self.display_actions = self.choices(display_menu, [('standard', 'Full window'), ('compact_bar', 'Bar and percentage only')], self.display_mode, self.set_display_mode)
+        self.display_actions = self.choices(display_menu, [('standard', 'Full window'), ('compact_bar', 'Bar and percentage only'), ('dashboard_strip', 'Dashboard strip')], self.display_mode, self.set_display_mode)
         app_only_action = self.menu.addAction('Show only over ChatGPT/Codex')
         app_only_action.setCheckable(True)
         app_only_action.setChecked(self.app_only)
@@ -478,7 +524,7 @@ class Bar(QWidget):
         refresh = self.menu.addAction('Refresh now')
         refresh.triggered.connect(self.client.refresh)
         theme_menu = self.menu.addMenu('Theme')
-        self.theme_actions = self.choices(theme_menu, [('solid', 'Solid dark'), ('translucent', 'Translucent')], self.theme, self.set_theme)
+        self.theme_actions = self.choices(theme_menu, [('solid', 'Solid dark'), ('translucent', 'Translucent'), ('dashboard', 'Dashboard')], self.theme, self.set_theme)
         opacity_menu = theme_menu.addMenu('Background opacity')
         self.choices(opacity_menu, [(140, '55%'), (175, '70%'), (220, '86%')], self.transparency, self.set_opacity)
         panel_menu = self.menu.addMenu('Visible panels')
@@ -498,7 +544,12 @@ class Bar(QWidget):
         self.menu_texts = []
         self.collect_menu_texts(self.menu)
         menu_button.setMenu(self.menu)
-        for widget in (self.compact_widget, self.compact_progress, self.compact_percentage):
+        self.strip_options.setMenu(self.menu)
+        for button, submenu in zip(self.footer_buttons, (theme_menu, opacity_menu, display_menu)):
+            button.setMenu(submenu)
+        for widget in (self.compact_widget, self.compact_progress, self.compact_percentage,
+                       self.dashboard_strip, self.strip_brand,
+                       *(part for segment in self.strip_segments for part in segment)):
             widget.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
             widget.customContextMenuRequested.connect(
                 lambda point, target=widget: self.menu.popup(target.mapToGlobal(point))
@@ -566,6 +617,10 @@ class Bar(QWidget):
         self.compact.setAccessibleName(self.t('Minimize to tray'))
         self.compact.setToolTip(self.t('Minimize to tray; click the icon to restore'))
         self.menu_button.setAccessibleName(self.t('QuotaDock options'))
+        self.strip_options.setAccessibleName(self.t('QuotaDock options'))
+        self.strip_options.setToolTip(self.t('QuotaDock options'))
+        for button, label in zip(self.footer_buttons, ('Theme', 'Background opacity', 'Display style')):
+            button.setText(self.t(label))
         self.compact_progress.setAccessibleName(self.t('Remaining quota'))
         for index, (_, _, progress) in enumerate(self.rows):
             progress.setAccessibleName(self.t(('Remaining quota: Window', 'Remaining quota: Week')[index]))
@@ -591,13 +646,40 @@ class Bar(QWidget):
         return actions
 
     def apply_theme(self):
-        background = f'rgba(32, 40, 36, {self.transparency})' if self.theme == 'translucent' else '#202824'
-        self.setStyleSheet(self.style_template.replace('CARD_BACKGROUND', background))
+        if self.theme == 'dashboard':
+            self.setStyleSheet("""
+              QWidget { font-family: "Noto Sans", sans-serif; color: #edf3f2; font-size: 12px; }
+              QFrame#card { background: qlineargradient(x1:0,y1:0,x2:1,y2:1, stop:0 #131b21, stop:1 #0c1118); border: 1px solid #39464d; border-radius: 15px; }
+              QFrame#quotaPanel { background: #151f25; border: 1px solid #34434a; border-radius: 10px; }
+              QLabel#title, QLabel#stripBrand { font-size: 15px; font-weight: bold; }
+              QLabel#panelEmblem { color: #69e9b3; font-size: 17px; }
+              QLabel#percentage { font-size: 18px; font-weight: bold; }
+              QLabel#status { color: #9fcbb7; font-size: 11px; }
+              QProgressBar { border: none; border-radius: 5px; background: #324047; height: 11px; }
+              QProgressBar::chunk { background: #58efad; border-radius: 5px; }
+              QPushButton { border: 1px solid #34434a; border-radius: 7px; padding: 5px 8px; background: #1a252b; }
+              QPushButton:hover { background: #283a40; border-color: #65dfab; }
+              QMenu { background: #151d23; border: 1px solid #48575e; padding: 6px; }
+              QMenu::item { padding: 5px 14px; }
+              QMenu::item:selected { background: #28423a; }
+            """)
+        else:
+            background = f'rgba(32, 40, 36, {self.transparency})' if self.theme == 'translucent' else '#202824'
+            self.setStyleSheet(self.style_template.replace('CARD_BACKGROUND', background))
+        if hasattr(self, 'card_layout'):
+            self.card_layout.setContentsMargins(*(16, 12, 16, 12) if self.theme == 'dashboard' else (11, 8, 11, 8))
+            self.card_layout.setSpacing(9 if self.theme == 'dashboard' else 5)
+            for panel_layout in self.panel_layouts:
+                panel_layout.setContentsMargins(*(12, 10, 12, 10) if self.theme == 'dashboard' else (0, 0, 0, 0))
+                panel_layout.setSpacing(7 if self.theme == 'dashboard' else 3)
+            self.title_label.setText("<span style='color:#58efad'>▂▅▇</span>  QuotaDock" if self.theme == 'dashboard' else '⠿ QuotaDock')
+            self.dashboard_footer.setVisible(self.theme == 'dashboard' and self.display_mode == 'standard')
 
     def set_theme(self, theme):
         self.theme = theme
         self.settings.setValue('theme', theme)
         self.apply_theme()
+        self.set_display_mode('dashboard_strip' if theme == 'dashboard' and self.display_mode == 'compact_bar' else self.display_mode)
 
     def set_opacity(self, opacity):
         self.transparency = opacity
@@ -611,8 +693,12 @@ class Bar(QWidget):
             widget.setVisible(panels == 'both' or panels == ('primary', 'secondary')[index])
         if save:
             self.settings.setValue('panels', panels)
-        if self.display_mode != 'compact_bar':
+        if self.display_mode == 'standard':
             self.setMinimumHeight((140 if panels == 'both' else 100) if self.minimal else (190 if panels == 'both' else 145))
+        for index, (segment, _, _) in enumerate(self.strip_segments):
+            segment.setVisible(panels == 'both' or panels == ('primary', 'secondary')[index])
+        if self.display_mode == 'dashboard_strip':
+            self.setMinimumWidth(300 if panels == 'both' else 225)
         if hasattr(self, 'tray'):
             self.update_tray()
 
@@ -620,21 +706,27 @@ class Bar(QWidget):
         self.display_mode = mode
         self.settings.setValue('displayMode', mode)
         compact = mode == 'compact_bar'
-        if not compact and self.minimal:
+        strip = mode == 'dashboard_strip'
+        if mode == 'standard' and self.minimal:
             self.minimal = False
             self.settings.setValue('minimal', False)
             self.minimal_action.setChecked(False)
             self.apply_minimal()
-        self.header.setVisible(not compact)
-        self.body.setVisible(not compact)
-        self.status.setVisible(not compact and (not self.minimal or self.is_failed))
+        self.header.setVisible(mode == 'standard')
+        self.body.setVisible(mode == 'standard')
+        self.status.setVisible(mode == 'standard' and (not self.minimal or self.is_failed))
         self.compact_widget.setVisible(compact)
+        self.dashboard_strip.setVisible(strip)
+        self.dashboard_footer.setVisible(self.theme == 'dashboard' and mode == 'standard')
         if compact:
             self.setMinimumSize(112, 38)
             self.resize(self.settings.value('compactWidth', 152, type=int), self.settings.value('compactHeight', 42, type=int))
+        elif strip:
+            self.setMinimumSize(300 if self.panels == 'both' else 225, 58)
+            self.resize(self.settings.value('stripWidth', 440, type=int), self.settings.value('stripHeight', 68, type=int))
         else:
-            self.setMinimumSize(210, 115)
-            self.resize(self.settings.value('fullWidth', 310, type=int), self.settings.value('fullHeight', 230, type=int))
+            self.setMinimumSize(340 if self.theme == 'dashboard' else 210, 220 if self.theme == 'dashboard' else 115)
+            self.resize(self.settings.value('fullWidth', 420 if self.theme == 'dashboard' else 310, type=int), self.settings.value('fullHeight', 300 if self.theme == 'dashboard' else 230, type=int))
         self.paint_quota()
 
     def set_app_only(self, enabled):
@@ -777,7 +869,8 @@ class Bar(QWidget):
                 if event.type() == QEvent.Type.MouseButtonPress and event.button() == Qt.MouseButton.LeftButton:
                     self.windowHandle().startSystemResize(edges)
                     return True
-            elif (self.display_mode == 'compact_bar' and event.type() == QEvent.Type.MouseButtonPress
+            elif (self.display_mode in ('compact_bar', 'dashboard_strip') and not isinstance(watched, QPushButton)
+                  and event.type() == QEvent.Type.MouseButtonPress
                   and event.button() == Qt.MouseButton.LeftButton):
                 handle = self.windowHandle()
                 if handle is not None:
@@ -797,7 +890,7 @@ class Bar(QWidget):
                 progress.setMinimumHeight(round(7 * scale))
         if hasattr(self, 'settings') and self.isVisible():
             if self.app_only and not self._placing:
-                prefix = 'compact' if self.display_mode == 'compact_bar' else 'full'
+                prefix = 'compact' if self.display_mode == 'compact_bar' else 'strip' if self.display_mode == 'dashboard_strip' else 'full'
                 self.settings.setValue(f'{prefix}Width', self.width())
                 self.settings.setValue(f'{prefix}Height', self.height())
             elif not self.app_only:
@@ -822,12 +915,12 @@ class Bar(QWidget):
         self.settings.setValue('minimal', enabled)
         self.apply_minimal()
         self.set_panels(self.panels, save=False)
-        if self.display_mode != 'compact_bar':
+        if self.display_mode == 'standard':
             self.resize(240, 150 if self.panels == 'both' else 115) if enabled else self.resize(310, 230)
         self.paint_quota()
 
     def apply_minimal(self):
-        self.status.setVisible(self.display_mode != 'compact_bar' and (not self.minimal or self.is_failed))
+        self.status.setVisible(self.display_mode == 'standard' and (not self.minimal or self.is_failed))
 
     def minimize_to_tray(self):
         if QSystemTrayIcon.isSystemTrayAvailable():
@@ -897,7 +990,10 @@ class Bar(QWidget):
         for index, (label, value, progress) in enumerate(self.rows):
             window = self.bucket.get(('primary', 'secondary')[index]) if self.bucket else None
             amount = remaining(window)
-            label.setText(self.t(window_label(window, ('Window', 'Week')[index])))
+            label_text = self.t(window_label(window, ('Window', 'Week')[index]))
+            if self.theme == 'dashboard' and index == 0 and label_text not in (self.t('Window'), '—'):
+                label_text = f'{self.t("Window")} · {label_text}'
+            label.setText(label_text)
             value.setText(f'{amount:g}%' if amount is not None else '—')
             progress.setValue(round(amount * 10) if amount is not None else 0)
             color = '#7fe7b2' if amount is not None and amount > 25 else '#ffd17e' if amount is not None and amount > 10 else '#ff9292'
@@ -930,6 +1026,16 @@ class Bar(QWidget):
         self.compact_progress.setStyleSheet(f'QProgressBar::chunk {{ background: {compact_color}; border-radius: 4px; }}')
         self.compact_progress.setEnabled(not self.is_failed and compact_amount is not None)
         self.compact_widget.setToolTip(self.rows[selected_index][2].toolTip())
+        for index, (segment, caption, meter) in enumerate(self.strip_segments):
+            window = self.bucket.get(('primary', 'secondary')[index]) if self.bucket else None
+            amount = remaining(window)
+            label = self.t(window_label(window, ('Hours', 'Week')[index]))
+            caption.setText(f'{label}  {amount:g}%' if amount is not None else f'{label}  —')
+            meter.setValue(round(amount * 10) if amount is not None else 0)
+            color = '#7e8982' if self.is_failed or amount is None else '#58efad' if amount > 25 else '#ffd17e' if amount > 10 else '#ff9292'
+            meter.setStyleSheet(f'QProgressBar::chunk {{ background: {color}; border-radius: 5px; }}')
+            meter.setToolTip(self.rows[index][2].toolTip())
+            caption.setToolTip(meter.toolTip())
         self.apply_minimal()
         self.update_tray()
 
