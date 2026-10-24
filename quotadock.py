@@ -2,6 +2,7 @@
 """Native movable quota monitor for KDE. Uses the signed-in local Codex app-server."""
 import argparse
 import ctypes
+import hashlib
 import json
 import os
 import re
@@ -16,6 +17,7 @@ from pathlib import Path
 from PySide6.QtCore import QEvent, QPoint, QRect, QSize, QLockFile, QObject, QProcess, QSettings, QStandardPaths, QUrl, Qt, QTimer, Signal
 from PySide6.QtGui import QActionGroup, QAction, QColor, QDesktopServices, QFont, QIcon, QPainter, QPixmap
 from PySide6.QtWidgets import QApplication, QFrame, QHBoxLayout, QLabel, QMenu, QProgressBar, QPushButton, QSystemTrayIcon, QVBoxLayout, QWidget
+from history import QuotaHistory
 from limits import codex_bucket, remaining, window_label
 from quota_core import QuotaSource
 from i18n import translate
@@ -39,6 +41,16 @@ def trusted_executable(path):
         if stat.st_uid not in (os.getuid(), 0):
             return None
     return str(candidate)
+
+
+def executable_identity(path):
+    """Stable, non-secret metadata used to warn about an executable swap."""
+    try:
+        stat = Path(path).stat()
+        digest = hashlib.sha256(Path(path).read_bytes()).hexdigest()
+    except OSError:
+        return None
+    return f'{stat.st_uid}:{stat.st_mode & 0o777:o}:{stat.st_size}:{stat.st_mtime_ns}:{digest}'
 
 
 def executable():
@@ -70,10 +82,13 @@ def executable():
 class QuotaClient(QObject):
     updated = Signal(dict)
     failed = Signal(str)
+    resolved = Signal(str)
     MAX_MESSAGE_BYTES = 1024 * 1024
 
-    def __init__(self):
+    def __init__(self, binary_resolver=executable, process_arguments=None):
         super().__init__()
+        self.binary_resolver = binary_resolver
+        self.process_arguments = process_arguments
         self.process = None
         self.buffer = b''
         self.serial = 0
@@ -107,11 +122,12 @@ class QuotaClient(QObject):
         if self.stopping:
             return
         self.retry.stop()
-        binary = executable()
+        binary = self.binary_resolver()
         if not binary:
             self.failed.emit('Codex not found. See README for setup.')
             self.schedule_retry()
             return
+        self.resolved.emit(binary)
         self.initialized = False
         self.pending = None
         self.buffer = b''
@@ -123,7 +139,7 @@ class QuotaClient(QObject):
         self.process.readyReadStandardError.connect(lambda: self.process.readAllStandardError())
         self.process.errorOccurred.connect(lambda _: self.abort('Could not connect to Codex.'))
         self.process.finished.connect(self.finished)
-        self.process.start(binary, ['app-server', '--stdio'])
+        self.process.start(binary, self.process_arguments or ['app-server', '--stdio'])
         self.timeout.start()
 
     def handshake(self):
@@ -245,6 +261,7 @@ class X11AppWindowWatcher(QObject):
         self.own_window = own_window
         self.xprop = shutil.which('xprop')
         self.xwininfo = shutil.which('xwininfo')
+        self.available = bool(self.xprop and self.xwininfo)
         self.process = QProcess(self)
         self.process.finished.connect(self.finished)
         self.process.errorOccurred.connect(lambda _: self.fail())
@@ -385,6 +402,9 @@ class Bar(QWidget):
         if self.language not in ('en', 'pt'):
             self.language = 'en'
         self.last_error_message = None
+        self.last_remaining = [None, None]
+        self.last_resets = [None, None]
+        self.overlay_warning = None
         self.last_update = 0
         self.bucket = None
         self.is_failed = True
@@ -406,6 +426,7 @@ class Bar(QWidget):
         self.transparency = self.settings.value('transparency', 175, type=int)
         self.expanded_size = None
         self.minimal = self.settings.value('minimal', True, type=bool)
+        self.history_enabled = self.settings.value('historyEnabled', False, type=bool)
         self.setMinimumSize(210, 115)
         self.resize(240, 150)
         self.style_template = """
@@ -560,6 +581,19 @@ class Bar(QWidget):
         app_only_action.toggled.connect(self.set_app_only)
         refresh = self.menu.addAction('Refresh now')
         refresh.triggered.connect(self.client.refresh)
+        alerts_menu = self.menu.addMenu('Notifications')
+        self.alert_actions = {}
+        for key, text in (('alert20', 'Alert below 20%'), ('alert10', 'Alert below 10%'), ('alertReset', 'Alert when quota resets')):
+            action = alerts_menu.addAction(text)
+            action.setCheckable(True)
+            action.setChecked(self.settings.value(key, True, type=bool))
+            action.toggled.connect(lambda enabled, name=key: self.settings.setValue(name, enabled))
+            self.alert_actions[key] = action
+        self.history_action = self.menu.addAction('Local quota history')
+        self.history_action.setCheckable(True)
+        self.history_action.setChecked(self.history_enabled)
+        self.history_action.toggled.connect(self.set_history_enabled)
+        self.menu.addAction('Clear local quota history').triggered.connect(self.clear_history)
         theme_menu = self.menu.addMenu('Theme')
         self.theme_actions = self.choices(theme_menu, [('solid', 'Solid dark'), ('translucent', 'Translucent'), ('dashboard', 'Dashboard')], self.theme, self.set_theme)
         opacity_menu = theme_menu.addMenu('Background opacity')
@@ -575,6 +609,9 @@ class Bar(QWidget):
         )
         self.menu.addAction('QuotaDock on GitHub').triggered.connect(
             lambda: QDesktopServices.openUrl(QUrl('https://github.com/sakazaki1/quotadock'))
+        )
+        self.menu.addAction('Check for updates').triggered.connect(
+            lambda: QDesktopServices.openUrl(QUrl('https://github.com/sakazaki1/quotadock/releases/latest'))
         )
         self.menu.addSeparator()
         self.menu.addAction('Quit').triggered.connect(QApplication.instance().quit)
@@ -625,11 +662,29 @@ class Bar(QWidget):
         self.age.start()
         self.window_watcher = AppWindowWatcher(self, self)
         self.window_watcher.changed.connect(self.app_window_changed)
+        if hasattr(self.client, 'resolved'):
+            self.client.resolved.connect(self.remember_executable)
         if self.app_only:
-            self.hide()
-            self.window_watcher.start()
+            if not getattr(self.window_watcher, 'available', True):
+                self.app_only = False
+                self.settings.setValue('appOnly', False)
+                self.show()
+                self.overlay_warning = 'Overlay tracking unavailable. Showing as a floating window.'
+            else:
+                self.hide()
+                self.window_watcher.start()
         self.set_display_mode(self.display_mode)
         self.retranslate_ui()
+
+    def remember_executable(self, path):
+        identity = executable_identity(path)
+        previous_path = self.settings.value('trustedExecutable')
+        previous_identity = self.settings.value('trustedExecutableIdentity')
+        if previous_path and previous_identity and (previous_path != path or previous_identity != identity):
+            self.status.setText(self.t('Codex executable changed. Verify it is trusted.'))
+            self.status.setToolTip(path)
+        self.settings.setValue('trustedExecutable', path)
+        self.settings.setValue('trustedExecutableIdentity', identity or '')
 
     def t(self, text):
         return translate(text, self.language)
@@ -662,7 +717,9 @@ class Bar(QWidget):
         for index, (_, _, progress) in enumerate(self.rows):
             progress.setAccessibleName(self.t(('Remaining quota: Window', 'Remaining quota: Week')[index]))
         self.paint_quota()
-        if self.last_error_message is not None:
+        if self.overlay_warning is not None:
+            self.status.setText(self.t(self.overlay_warning))
+        elif self.last_error_message is not None:
             self.error(self.last_error_message)
         elif not self.last_update:
             self.status.setText(self.t('Connecting to Codex…'))
@@ -1077,8 +1134,35 @@ class Bar(QWidget):
         self.last_update = time.monotonic()
         self.is_failed = False
         self.last_error_message = None
+        self.notify_thresholds(bucket)
+        if self.history_enabled:
+            self.history().record('claude-file' if self.client.__class__.__name__ == 'ClaudeFileClient' else 'codex', bucket)
         self.paint_quota()
         self.tick()
+
+    def history(self):
+        location = Path(QStandardPaths.writableLocation(QStandardPaths.StandardLocation.AppLocalDataLocation) or tempfile.gettempdir())
+        return QuotaHistory(location / 'history.sqlite3')
+
+    def set_history_enabled(self, enabled):
+        self.history_enabled = enabled
+        self.settings.setValue('historyEnabled', enabled)
+
+    def clear_history(self):
+        self.history().clear()
+
+    def notify_thresholds(self, bucket):
+        for index, name in enumerate(('primary', 'secondary')):
+            amount = remaining(bucket.get(name))
+            previous = self.last_remaining[index]
+            reset = bucket.get(name, {}).get('resetsAt') if isinstance(bucket.get(name), dict) else None
+            for threshold, key in ((20, 'alert20'), (10, 'alert10')):
+                if self.settings.value(key, True, type=bool) and amount is not None and (previous is None or previous > threshold) and amount <= threshold:
+                    self.tray.showMessage('QuotaDock', self.t('Quota alert: {amount}% remaining').format(amount=f'{amount:g}'))
+            if self.settings.value('alertReset', True, type=bool) and self.last_resets[index] and isinstance(reset, (int, float)) and reset > self.last_resets[index]:
+                self.tray.showMessage('QuotaDock', self.t('Quota reset detected.'))
+            self.last_remaining[index] = amount
+            self.last_resets[index] = reset if isinstance(reset, (int, float)) else self.last_resets[index]
 
     def paint_quota(self):
         for index, (label, value, progress) in enumerate(self.rows):

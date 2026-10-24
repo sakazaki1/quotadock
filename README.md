@@ -41,6 +41,15 @@ QuotaDock is a standalone companion, **not a plugin injected into ChatGPT**. By 
 
 The displayed quota belongs to the account authenticated in the **local Codex runtime**. It is not a universal meter for every model or feature in regular ChatGPT chats. Some plans may omit one of the quota windows.
 
+| Platform | Status | Notes |
+| --- | --- | --- |
+| Kubuntu/KDE with XWayland | Supported beta | Primary development environment. |
+| Other Linux desktops | Community beta | Uses a normal floating-window fallback if active-window tracking is unavailable. |
+| Windows 10/11 | Supported beta | CI and installer are tested; DPI and multi-monitor validation on physical hardware remains in progress. |
+| macOS | Not supported | No foreground-window adapter yet. |
+
+Manual hardware validation is tracked in the [platform checklist](docs/platform-validation.md).
+
 ## Quick start — Ubuntu / Kubuntu
 
 1. Install and sign in to ChatGPT/Codex. QuotaDock needs a local Codex executable with an authenticated ChatGPT account.
