@@ -3,11 +3,11 @@ import ctypes
 from ctypes import wintypes
 from pathlib import Path
 
-from PyQt6.QtCore import QObject, QRect, QTimer, pyqtSignal
+from PySide6.QtCore import QObject, QRect, QTimer, Signal
 
 
 class AppWindowWatcher(QObject):
-    changed = pyqtSignal(bool, QRect)
+    changed = Signal(bool, QRect)
 
     def __init__(self, own_window, parent=None):
         super().__init__(parent)

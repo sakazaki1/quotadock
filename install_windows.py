@@ -42,8 +42,8 @@ def main():
         venv.EnvBuilder(with_pip=True).create(environment)
     python = environment / 'Scripts' / 'python.exe'
     pythonw = environment / 'Scripts' / 'pythonw.exe'
-    subprocess.run([str(python), '-m', 'pip', 'install', 'PyQt6>=6.5,<7'], check=True)
-    for name in ('quotadock.py', 'windows_watcher.py', 'limits.py', 'i18n.py', 'quotadock.svg'):
+    subprocess.run([str(python), '-m', 'pip', 'install', 'PySide6>=6.5,<7'], check=True)
+    for name in ('quotadock.py', 'windows_watcher.py', 'limits.py', 'i18n.py', 'quota_core.py', 'claude_source.py', 'quotadock.svg'):
         shutil.copy2(source / name, target / name)
     menu = Path(roaming) / 'Microsoft' / 'Windows' / 'Start Menu' / 'Programs'
     startup = menu / 'Startup'

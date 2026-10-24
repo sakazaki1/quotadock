@@ -5,7 +5,7 @@ import unittest
 
 os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')
 
-from PyQt6.QtCore import QCoreApplication, QEventLoop, QProcess, QTimer
+from PySide6.QtCore import QCoreApplication, QEventLoop, QProcess, QTimer
 from quotadock import QuotaClient, X11AppWindowWatcher
 
 
@@ -53,6 +53,20 @@ class RuntimeTests(unittest.TestCase):
         self.assertTrue(client.retry.isActive())
         client.finished()
         self.assertTrue(client.retry.isActive())
+        client.stop()
+
+    def test_retry_backoff_increases_and_is_capped(self):
+        client = QuotaClient()
+        client.schedule_retry()
+        first = client.retry.interval()
+        client.retry.stop()
+        client.schedule_retry()
+        second = client.retry.interval()
+        self.assertGreater(second, first)
+        for _ in range(10):
+            client.retry.stop()
+            client.schedule_retry()
+        self.assertLessEqual(client.retry.interval(), 138000)
         client.stop()
 
     def test_handshake_read_notification_and_single_pending_request(self):

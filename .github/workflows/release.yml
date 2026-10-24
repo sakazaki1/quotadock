@@ -1,0 +1,46 @@
+name: Release packages
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  package:
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            name: quotadock-linux
+          - os: windows-latest
+            name: quotadock-windows.exe
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install "PySide6>=6.5,<7" pyinstaller
+      - name: Build standalone application
+        shell: bash
+        run: |
+          separator=':'
+          if [ "$RUNNER_OS" = 'Windows' ]; then separator=';'; fi
+          pyinstaller --noconfirm --onefile --windowed --name quotadock --add-data "quotadock.svg${separator}." quotadock.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.name }}
+          path: dist/*
+  publish:
+    needs: package
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: release
+      - uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: release/**/*

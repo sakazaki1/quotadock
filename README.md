@@ -18,7 +18,8 @@ The screenshots use demo percentages for illustration; normal operation always d
 
 - **Real remaining quota:** percentages from 100% down to 0% for your short-term and weekly windows.
 - **Live tray icon:** remaining percentage and proportional quota bars, with full values available on hover.
-- **Automatic refresh:** requests an update about every 30 seconds while connected and accepts quota notifications received on its connection.
+- **Automatic quota refresh:** accepts quota notifications immediately and uses periodic polling as a safety net.
+- **Safe retries:** reconnects with a capped exponential delay and jitter when the local service is unavailable.
 - **Next reset time:** visible below the hours panel, in your computer's local time zone.
 - **Compact bar theme:** shows only the remaining percentage and its progress bar, with no app name or labels.
 - **ChatGPT/Codex-only overlay:** by default the small pop-up stays inside the active ChatGPT/Codex window and hides when you switch to another app.
@@ -34,7 +35,7 @@ The screenshots use demo percentages for illustration; normal operation always d
 
 ## Compatibility
 
-The Linux version has been tested on **Kubuntu 26.04, KDE Plasma, Wayland with XWayland**. A Windows port is available for **Windows 10/11**, Python 3 and PyQt6; it uses the native Win32 foreground-window APIs and needs validation on a Windows computer. macOS is not supported.
+The Linux version has been tested on **Kubuntu 26.04, KDE Plasma, Wayland with XWayland**. A Windows port is available for **Windows 10/11**, Python 3 and PySide6; it uses the native Win32 foreground-window APIs and needs validation on a Windows computer. macOS is not supported.
 
 QuotaDock is a standalone companion, **not a plugin injected into ChatGPT**. By default it anchors its pop-up to the active ChatGPT/Codex window and hides when that window loses focus. On Linux this uses `xprop` and `xwininfo`; on Windows it recognizes foreground windows owned by `ChatGPT.exe` or `Codex.exe`. If no matching window is detectable, the overlay stays hidden. Turn off **Show only over ChatGPT/Codex** in the tray menu to use it as a regular floating window. It does not modify the official application.
 
@@ -46,7 +47,7 @@ The displayed quota belongs to the account authenticated in the **local Codex ru
 2. Install the UI dependency:
 
    ```sh
-   sudo apt install python3-pyqt6
+   python3 -m pip install --user PySide6
    ```
 
 3. Download this repository using **Code → Download ZIP** and extract it. Open a terminal in the extracted folder and run:
@@ -81,7 +82,7 @@ sh launch.sh
 
 1. Install Python 3 from [python.org](https://www.python.org/downloads/windows/) with the Python launcher (`py`). Install and sign in to the ChatGPT/Codex desktop app or Codex CLI so `codex.exe` is available.
 2. Download this repository using **Code → Download ZIP** and extract it.
-3. Double-click `install-windows.cmd`. It creates a per-user Python environment, installs PyQt6, and adds **QuotaDock** to the Start menu and Startup folder. No administrator rights are needed. Internet access is needed once for PyQt6.
+3. Double-click `install-windows.cmd`. It creates a per-user Python environment, installs PySide6, and adds **QuotaDock** to the Start menu and Startup folder. No administrator rights are needed. Internet access is needed once for PySide6.
 4. Launch **QuotaDock** from the Start menu. The usage indicator appears in the Windows notification area; Windows may initially place it behind the hidden-icons arrow.
 
 To disable startup at login, run `install-windows.cmd --no-autostart` from Command Prompt. Quit QuotaDock before updating, then run the installer from a newly downloaded copy. The installed files live in `%LOCALAPPDATA%\QuotaDock` and the shortcuts in your user Start menu. To remove it, quit the app, delete that folder and the two `QuotaDock.lnk` shortcuts from your Start menu and Startup folder.
@@ -100,7 +101,7 @@ On Windows it checks common per-user desktop locations and `codex.exe` on `PATH`
 
 To use this override from the application menu as well, configure the environment variable in your desktop session. Sign in using your Codex installation's normal sign-in flow. QuotaDock never asks you to paste credentials or API keys.
 
-`QUOTADOCK_CODEX` and your `PATH` must point to a Codex executable you trust. QuotaDock runs that executable with your user permissions and environment. It never prints its environment, protocol responses or authentication data to a log.
+`QUOTADOCK_CODEX` and your `PATH` must point to a Codex executable you trust. On POSIX, QuotaDock rejects executables writable by group or other users and accepts only files owned by you or root. It never prints its environment, protocol responses or authentication data to a log.
 
 ## Everyday controls
 
@@ -131,7 +132,7 @@ With both panels selected, the tray number represents the hours window; the top 
 
 QuotaDock starts `codex app-server --stdio`, completes initialization, and calls the documented `account/rateLimits/read` method. Remaining quota is calculated as `100 - usedPercent`. It also accepts `account/rateLimits/updated` notifications on that connection.
 
-Updates are periodic, not guaranteed after every individual action. A request may wait up to 20 seconds before timing out; reconnection normally starts 30 seconds later, so an outage can leave more than 50 seconds between samples. The service itself can delay reporting. QuotaDock does not predict resets or synthesize new percentages when the local clock reaches a reset time. When offline, the window retains the last reading in gray with a warning; the tray switches to `?`. Readings older than 75 seconds are marked stale.
+Updates are periodic, not guaranteed after every individual action. A request may wait up to 20 seconds before timing out. Failed connections retry with a capped exponential delay and jitter, avoiding repeated rapid launches when the runtime is unavailable. The service itself can delay reporting. QuotaDock does not predict resets or synthesize new percentages when the local clock reaches a reset time. When offline, the window retains the last reading in gray with a warning; the tray switches to `?`. Readings older than 75 seconds are marked stale.
 
 - No analytics, ad services or QuotaDock backend.
 - No direct reading, copying or transmission of authentication files by QuotaDock.
@@ -158,6 +159,18 @@ QuotaDock is an independent community project and is not affiliated with or endo
 
 To update, quit QuotaDock from its tray menu, download the new version, run `sh install.sh` again, then reopen it from the menu. Reuse `--no-autostart` if you want startup disabled.
 
+Tagged versions publish standalone Linux and Windows packages in [GitHub Releases](https://github.com/sakazaki1/quotadock/releases). A Python package definition is also included, so developers can install a checkout in an isolated environment with `pipx install .`.
+
+## Optional Claude Code source
+
+QuotaDock can display a **local Claude Code status-line mirror** without browser cookies, tokens, or unofficial web endpoints. Configure Claude Code (or a trusted status-line helper) to write a JSON file with `five_hour` and `seven_day` entries, then launch:
+
+```sh
+quotadock --source claude-file --claude-state ~/.claude/statusline-state.json
+```
+
+The file is read locally every 15 seconds. QuotaDock never treats a missing field as available quota, and it does not mark a valid Claude file stale merely because Claude Code is closed; its values remain meaningful until their provider-reported reset time.
+
 To uninstall, quit QuotaDock and run:
 
 ```sh
@@ -181,3 +194,5 @@ Protocol reference: [Codex App Server documentation](https://learn.chatgpt.com/d
 ## License
 
 MIT. See [LICENSE](LICENSE).
+
+The application uses PySide6, the official Qt for Python bindings, available under LGPLv3/GPLv3 or a commercial license. This avoids the GPL-only PyQt6 binding conflict with QuotaDock's MIT source license. See the [Qt for Python licensing documentation](https://doc.qt.io/qtforpython-6/).

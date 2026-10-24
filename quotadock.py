@@ -13,11 +13,32 @@ import time
 from datetime import datetime
 from pathlib import Path
 
-from PyQt6.QtCore import QEvent, QPoint, QRect, QSize, QLockFile, QObject, QProcess, QSettings, QStandardPaths, QUrl, Qt, QTimer, pyqtSignal
-from PyQt6.QtGui import QActionGroup, QAction, QColor, QDesktopServices, QFont, QIcon, QPainter, QPixmap
-from PyQt6.QtWidgets import QApplication, QFrame, QHBoxLayout, QLabel, QMenu, QProgressBar, QPushButton, QSystemTrayIcon, QVBoxLayout, QWidget
+from PySide6.QtCore import QEvent, QPoint, QRect, QSize, QLockFile, QObject, QProcess, QSettings, QStandardPaths, QUrl, Qt, QTimer, Signal
+from PySide6.QtGui import QActionGroup, QAction, QColor, QDesktopServices, QFont, QIcon, QPainter, QPixmap
+from PySide6.QtWidgets import QApplication, QFrame, QHBoxLayout, QLabel, QMenu, QProgressBar, QPushButton, QSystemTrayIcon, QVBoxLayout, QWidget
 from limits import codex_bucket, remaining, window_label
+from quota_core import QuotaSource
 from i18n import translate
+
+VERSION = '1.1.0'
+
+
+def trusted_executable(path):
+    """Return an executable only when it is safe to run as the current user."""
+    try:
+        candidate = Path(path).expanduser().resolve(strict=True)
+        stat = candidate.stat()
+    except OSError:
+        return None
+    if not candidate.is_file() or not os.access(candidate, os.X_OK):
+        return None
+    if os.name != 'nt':
+        # A binary writable by another account could be swapped after discovery.
+        if stat.st_mode & 0o022:
+            return None
+        if stat.st_uid not in (os.getuid(), 0):
+            return None
+    return str(candidate)
 
 
 def executable():
@@ -26,26 +47,29 @@ def executable():
         path = Path(override).expanduser()
         if sys.platform == 'win32' and path.suffix.casefold() != '.exe':
             return None
-        return str(path) if path.is_file() and os.access(path, os.X_OK) else None
+        return trusted_executable(path)
     if sys.platform == 'win32':
         local = os.environ.get('LOCALAPPDATA')
         if local:
             for relative in ('Programs/ChatGPT/resources/codex.exe', 'Programs/Codex/resources/codex.exe'):
                 path = Path(local) / relative
-                if path.is_file():
-                    return str(path)
-        return shutil.which('codex.exe')
+                trusted = trusted_executable(path)
+                if trusted:
+                    return trusted
+        return trusted_executable(shutil.which('codex.exe')) if shutil.which('codex.exe') else None
     for location in ('/usr/lib/chatgpt/resources/codex', '/usr/lib/codex/resources/codex',
                      '/opt/ChatGPT/resources/codex', '/opt/Codex/resources/codex'):
         path = Path(location)
-        if path.is_file() and os.access(path, os.X_OK):
-            return str(path)
-    return shutil.which('codex')
+        trusted = trusted_executable(path)
+        if trusted:
+            return trusted
+    found = shutil.which('codex')
+    return trusted_executable(found) if found else None
 
 
 class QuotaClient(QObject):
-    updated = pyqtSignal(dict)
-    failed = pyqtSignal(str)
+    updated = Signal(dict)
+    failed = Signal(str)
     MAX_MESSAGE_BYTES = 1024 * 1024
 
     def __init__(self):
@@ -65,8 +89,9 @@ class QuotaClient(QObject):
         self.timeout.timeout.connect(lambda: self.abort('Request timed out. Retrying…'))
         self.retry = QTimer(self)
         self.retry.setSingleShot(True)
-        self.retry.setInterval(30000)
+        self.retry_attempt = 0
         self.retry.timeout.connect(self.start)
+        self.stale_after = 75
 
     def send(self, method, params=None, request=True):
         obj = {'method': method}
@@ -85,7 +110,7 @@ class QuotaClient(QObject):
         binary = executable()
         if not binary:
             self.failed.emit('Codex not found. See README for setup.')
-            self.retry.start()
+            self.schedule_retry()
             return
         self.initialized = False
         self.pending = None
@@ -102,7 +127,7 @@ class QuotaClient(QObject):
         self.timeout.start()
 
     def handshake(self):
-        self.pending = self.send('initialize', {'clientInfo': {'name': 'quotadock', 'version': '1.0.0'}})
+        self.pending = self.send('initialize', {'clientInfo': {'name': 'quotadock', 'version': VERSION}})
 
     def read(self):
         if self.stopping or self.retry.isActive():
@@ -162,6 +187,7 @@ class QuotaClient(QObject):
             self.failed.emit('No Codex quota available for this session.')
             return
         self.updated.emit(bucket)
+        self.retry_attempt = 0
 
     def refresh(self):
         if self.initialized and self.pending is None:
@@ -178,7 +204,7 @@ class QuotaClient(QObject):
         self.pending = None
         if self.process and self.process.state() != QProcess.ProcessState.NotRunning:
             self.process.kill()
-        self.retry.start()
+        self.schedule_retry()
 
     def finished(self, *_):
         self.poll.stop()
@@ -187,7 +213,17 @@ class QuotaClient(QObject):
         self.pending = None
         if not self.stopping and not self.retry.isActive():
             self.failed.emit('Connection closed. Reconnecting…')
-            self.retry.start()
+            self.schedule_retry()
+
+    def schedule_retry(self):
+        """Retry with a capped exponential delay and small jitter."""
+        if self.stopping or self.retry.isActive():
+            return
+        delay = min(120000, 2000 * (2 ** min(self.retry_attempt, 6)))
+        jitter = int(delay * 0.15 * ((time.monotonic() * 1000) % 1))
+        self.retry.setInterval(delay + jitter)
+        self.retry_attempt += 1
+        self.retry.start()
 
     def stop(self):
         self.stopping = True
@@ -202,7 +238,7 @@ class QuotaClient(QObject):
 
 class X11AppWindowWatcher(QObject):
     """Follow the active ChatGPT/Codex window through the X11 bridge on KDE."""
-    changed = pyqtSignal(bool, QRect)
+    changed = Signal(bool, QRect)
 
     def __init__(self, own_window, parent=None):
         super().__init__(parent)
@@ -342,7 +378,7 @@ class Handle(QLabel):
 
 
 class Bar(QWidget):
-    def __init__(self):
+    def __init__(self, client: QuotaSource | None = None):
         super().__init__()
         self.settings = QSettings('QuotaDock', 'QuotaDock')
         self.language = self.settings.value('language', 'en')
@@ -352,7 +388,7 @@ class Bar(QWidget):
         self.last_update = 0
         self.bucket = None
         self.is_failed = True
-        self.client = QuotaClient()
+        self.client = client or QuotaClient()
         self.client.updated.connect(self.update_quota)
         self.client.failed.connect(self.error)
         self.setWindowTitle('QuotaDock — Codex usage monitor')
@@ -1101,7 +1137,8 @@ class Bar(QWidget):
         if not self.last_update:
             return
         age = int(time.monotonic() - self.last_update)
-        if age > 75 and not self.is_failed:
+        stale_after = getattr(self.client, 'stale_after', 75)
+        if stale_after is not None and age > stale_after and not self.is_failed:
             self.error('Stale data. Waiting for Codex…')
         elif not self.is_failed:
             self.status.setText(self.t('Remaining • updated {age}s ago').format(age=age))
@@ -1129,6 +1166,10 @@ class Bar(QWidget):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--smoke-test', action='store_true')
+    parser.add_argument('--source', choices=('codex', 'claude-file'), default='codex',
+                        help='Quota source. Claude reads only the local mirror file you specify.')
+    parser.add_argument('--claude-state', default='~/.claude/statusline-state.json',
+                        help='Path to a Claude Code status-line mirror JSON file.')
     args = parser.parse_args()
     app = QApplication(sys.argv[:1])
     import signal
@@ -1143,7 +1184,12 @@ def main():
     lock = QLockFile(str(runtime / 'quotadock.lock'))
     if not lock.tryLock(100):
         return 0
-    bar = Bar()
+    if args.source == 'claude-file':
+        from claude_source import ClaudeFileClient
+        client = ClaudeFileClient(args.claude_state)
+    else:
+        client = QuotaClient()
+    bar = Bar(client)
     app.aboutToQuit.connect(bar.cleanup)
     if not bar.app_only:
         bar.show()
