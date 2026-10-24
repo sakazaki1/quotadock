@@ -31,7 +31,7 @@ def main():
     parser.add_argument('--no-autostart', action='store_true', help='Do not start QuotaDock at login')
     args = parser.parse_args()
     if importlib.util.find_spec('PySide6') is None:
-        parser.exit(1, 'PySide6 is missing. Install it with: python3 -m pip install --user PySide6\n')
+        parser.exit(1, 'PySide6 is missing. On Ubuntu/Kubuntu: sudo apt install python3-pyside6.qtwidgets\n')
     source = Path(__file__).resolve().parent
     data = Path(os.environ.get('XDG_DATA_HOME', str(Path.home() / '.local/share')))
     config = Path(os.environ.get('XDG_CONFIG_HOME', str(Path.home() / '.config')))

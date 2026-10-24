@@ -47,7 +47,7 @@ The displayed quota belongs to the account authenticated in the **local Codex ru
 2. Install the UI dependency:
 
    ```sh
-   python3 -m pip install --user PySide6
+   sudo apt install python3-pyside6.qtwidgets
    ```
 
 3. Download this repository using **Code → Download ZIP** and extract it. Open a terminal in the extracted folder and run:
