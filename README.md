@@ -191,6 +191,8 @@ The smoke test uses fixture values and writes a preview to `/tmp/quotadock-previ
 
 Protocol reference: [Codex App Server documentation](https://learn.chatgpt.com/docs/app-server).
 
+The prioritized public implementation plan is available in the [roadmap](docs/roadmap.md).
+
 ## License
 
 MIT. See [LICENSE](LICENSE).
