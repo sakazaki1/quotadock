@@ -48,6 +48,8 @@ PT_BR = {
     'Codex executable changed. Verify it is trusted.': 'O executável do Codex mudou. Verifique se ele é confiável.',
     'Quit': 'Sair',
     'Language': 'Idioma',
+    'Usage source': 'Fonte de uso',
+    'Codex and Claude Code': 'Codex e Claude Code',
     'Real Codex quota': 'Saldo real do Codex',
     'QuotaDock • remaining': 'QuotaDock • restante',
     'QuotaDock • offline': 'QuotaDock • desconectado',

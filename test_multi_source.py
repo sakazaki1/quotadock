@@ -36,8 +36,8 @@ class MultiSourceTests(unittest.TestCase):
         self.state.write_text(json.dumps({'five_hour': five_hour, 'seven_day': seven_day}))
 
     def bars(self):
-        codex = Bar()
-        claude = Bar(ClaudeFileClient(self.state))
+        codex = Bar(source_mode='both')
+        claude = Bar(ClaudeFileClient(self.state), source_mode='both')
         self.addCleanup(codex.cleanup)
         self.addCleanup(claude.cleanup)
         return codex, claude
@@ -99,6 +99,13 @@ class MultiSourceTests(unittest.TestCase):
         codex, claude = self.bars()
         self.assertEqual(codex.client.source_id, 'codex')
         self.assertEqual(claude.client.source_id, 'claude-file')
+
+    def test_usage_source_setting_is_shared_between_provider_windows(self):
+        codex, claude = self.bars()
+        self.assertTrue(codex.source_actions['both'].isChecked())
+        self.assertTrue(claude.source_actions['both'].isChecked())
+        codex.settings.setValue('sourceMode', 'claude-file')
+        self.assertEqual(QSettings('QuotaDock', 'QuotaDock').value('sourceMode'), 'claude-file')
 
 
 if __name__ == '__main__':

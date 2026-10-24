@@ -23,6 +23,7 @@ from quota_core import QuotaSource
 from i18n import translate
 
 VERSION = '1.1.0'
+SOURCE_CHOICES = ('codex', 'claude-file', 'both')
 
 
 class ProviderSettings:
@@ -32,7 +33,7 @@ class ProviderSettings:
     their own ``<provider>/`` namespace, which lets several windows run in one process without sharing
     position, theme or alert choices. Only the interface language is shared.
     """
-    SHARED = frozenset({'language'})
+    SHARED = frozenset({'language', 'sourceMode'})
 
     def __init__(self, provider):
         self.provider = provider
@@ -425,7 +426,7 @@ class Handle(QLabel):
 class Bar(QWidget):
     language_changed = Signal(str)
 
-    def __init__(self, client: QuotaSource | None = None):
+    def __init__(self, client: QuotaSource | None = None, source_mode='codex'):
         super().__init__()
         self.client = client or QuotaClient()
         self.provider = getattr(self.client, 'provider', 'codex')
@@ -434,6 +435,8 @@ class Bar(QWidget):
         self.accent = '#7fe7b2' if self.provider == 'codex' else '#d97757'
         self.strip_accent = '#58efad' if self.provider == 'codex' else '#d97757'
         self.settings = ProviderSettings(self.provider)
+        self.source_mode = source_mode if source_mode in SOURCE_CHOICES else 'codex'
+        self.source_restart_pending = False
         self.language = self.settings.value('language', 'en')
         if self.language not in ('en', 'pt'):
             self.language = 'en'
@@ -643,6 +646,10 @@ class Bar(QWidget):
         self.menu.addAction('Reset window position').triggered.connect(self.center)
         language_menu = self.menu.addMenu('Language')
         self.language_actions = self.choices(language_menu, [('en', 'English'), ('pt', 'Português')], self.language, self.set_language)
+        source_menu = self.menu.addMenu('Usage source')
+        self.source_actions = self.choices(source_menu, [
+            ('codex', 'Codex'), ('claude-file', 'Claude Code'), ('both', 'Codex and Claude Code'),
+        ], self.source_mode, self.set_source_mode)
         self.menu.addSeparator()
         copy_path = self.menu.addAction('Copy Codex executable path')
         copy_path.triggered.connect(
@@ -744,6 +751,18 @@ class Bar(QWidget):
         self.settings.setValue('language', language)
         self.retranslate_ui()
         self.language_changed.emit(language)
+
+    def set_source_mode(self, mode):
+        """Save the selected providers and restart cleanly so one lock still owns the tray."""
+        if mode not in SOURCE_CHOICES or self.source_restart_pending:
+            return
+        self.settings.setValue('sourceMode', mode)
+        if mode == self.source_mode:
+            return
+        self.source_restart_pending = True
+        script = str(Path(__file__).resolve())
+        QProcess.startDetached(sys.executable, [script, '--source', mode, '--retry-lock'])
+        QTimer.singleShot(150, QApplication.instance().quit)
 
     def follow_language(self, language):
         """Adopt a language chosen in another QuotaDock window without announcing it again."""
@@ -1311,11 +1330,13 @@ class Bar(QWidget):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--smoke-test', action='store_true')
-    parser.add_argument('--source', action='append', choices=('codex', 'claude-file', 'both'),
+    parser.add_argument('--source', action='append', choices=SOURCE_CHOICES,
                         help='Quota source (default: codex). Repeat the option, or use "both", to show Codex and '
                              'Claude together. Claude reads only the local mirror file you specify.')
     parser.add_argument('--claude-state', default='~/.claude/statusline-state.json',
                         help='Path to a Claude Code status-line mirror JSON file.')
+    parser.add_argument('--retry-lock', action='store_true',
+                        help=argparse.SUPPRESS)
     args = parser.parse_args()
     app = QApplication(sys.argv[:1])
     import signal
@@ -1328,13 +1349,20 @@ def main():
     runtime = Path(QStandardPaths.writableLocation(runtime_location) or tempfile.gettempdir())
     runtime.mkdir(parents=True, exist_ok=True)
     lock = QLockFile(str(runtime / 'quotadock.lock'))
-    if not lock.tryLock(100):
-        return 0
+    deadline = time.monotonic() + 3 if args.retry_lock else time.monotonic()
+    while not lock.tryLock(100):
+        if time.monotonic() >= deadline:
+            return 0
+        time.sleep(0.1)
+    saved_mode = QSettings('QuotaDock', 'QuotaDock').value('sourceMode', 'codex')
+    if saved_mode not in SOURCE_CHOICES:
+        saved_mode = 'codex'
     names = []
-    for choice in args.source or ['codex']:
+    for choice in args.source or [saved_mode]:
         for name in (('codex', 'claude-file') if choice == 'both' else (choice,)):
             if name not in names:
                 names.append(name)
+    source_mode = 'both' if len(names) == 2 else names[0]
     bars = []
     for name in names:
         if name == 'claude-file':
@@ -1342,7 +1370,7 @@ def main():
             client = ClaudeFileClient(args.claude_state)
         else:
             client = QuotaClient()
-        bar = Bar(client)
+        bar = Bar(client, source_mode=source_mode)
         app.aboutToQuit.connect(bar.cleanup)
         bars.append(bar)
     for bar in bars:
